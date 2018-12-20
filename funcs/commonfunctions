@@ -1,0 +1,362 @@
+#! /bin/env bash
+
+# functions for data pipe port tools
+# created on 2018-11-12, by wangzheny
+
+function is_file {
+	if [ ! -f "$1" ] ; then
+		echo "文件:$1 不存在或文件路径及名称错误。"
+		exit 2
+	fi
+}
+
+function is_dir {
+	if [ ! -d "$1" ] ; then
+		echo "目录: $1 不存在。"
+		exit 2
+	fi
+}
+
+# 规范[表清单需求文件]的内容
+# 删除空行、dos符号、全部转换成大写
+# 参数输入：[表清单需求文件]的名字
+function handleFormat {
+	is_file "$1"
+	sed -i 's/^M//' $1
+	sed -i '/^$/d' $1
+	sed -i 's/[a-z]/\u&/g' $1
+}
+
+# 判断要导的表在sourceDB是否都存在
+# $1: 表名 或 需求文件名
+# $2: 数据库连接串,默认值："/ as sysdba"
+function isTableExist {
+_conn_str=${2:-"/ as sysdba"}
+# 默认表都存在，否则则返回 0，终止程序执行
+cou_noext_tab=0
+# 如果参数是一个文件，则使用文件中的内容进行判断
+if [ -f $1 ]; then
+while read line
+do
+USERNAME=`echo $line | cut -d ' ' -f 1`
+TABLENAME=`echo $line | cut -d ' ' -f 2` 
+IFEXIST=`sqlplus -S "${_conn_str}" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+select count(*) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
+exit;
+EOF`
+if [ $IFEXIST == "0" ]; then
+	((cou_noext_tab++));
+	echo "表: ${USERNAME}.$TABLENAME 在源端数据库中不存在。"
+fi
+done < $1
+# 如果参数是一个表名，则根据表名进行判断
+# 参数的格式为USER.TAB
+else
+USERNAME=`echo $1 | cut -d '.' -f 1 | tr [a-z] [A-Z]`
+TABLENAME=`echo $1 | cut -d '.' -f 2 | tr [a-z] [A-Z]` 
+IFEXIST=`sqlplus -S "${_conn_str}" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+select count(*) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
+exit;
+EOF`
+if [ $IFEXIST == "0" ]; then
+	((cou_noext_tab++));
+	echo "表: ${USERNAME}.$TABLENAME 不存在。"
+fi
+fi
+# 如果发现了不存在的表，退出终止程序执行
+if [ $cou_noext_tab -gt 0 ]; then
+	exit $cou_noext_tab
+fi
+}
+
+# 生成用户的映射关系，并更新配置文件dpp.conf
+# 映射关系只体现用户名发生变化的，如果所有用户名都与原来的一样，dpp.conf中的remap_users值将为空
+# $1：需求文件
+# $2：配置文件 dpp.conf
+function setRemapUsers {
+	# 只取fromuser与touser不同的映射，每组映射之间用“，”逗号隔开，并变为一行
+	remap_users=`awk '{if($1 != $3) print $1 ":" $3}' "$1" | uniq | tr -t "\n" "," | sed -e 's/,$/\n/'`
+	# 自动更新dpp.conf配置文件中用户映射的值
+	echo "setRemapUsers 配置文件: $2"
+	sed -i "/^remap_users=/c remap_users=\"${remap_users}\"" $2
+}
+
+# truncate TDB's tables
+# 参数：
+#	1 数据库连接串
+#	2 tablename
+function truncateTable {
+checkDBConnection $1
+(sqlplus -S "$1" << EOF
+truncate table $2;
+exit;
+EOF
+) | grep -i "Table truncated" > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+	echo "目标数据库中不存在表: $2"
+	exit
+fi
+}
+
+# 检查数据库是否可以连接成功
+# 以数据库连接串作为参数
+function checkDBConnection {
+isInstallTool "sqlplus"
+(sqlplus -S "$1" << EOF
+select status from v\$instance;
+exit;
+EOF
+) | grep OPEN > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+	echo "${1} 数据库无法连接"
+	exit
+fi
+}
+
+# $1: directory name
+# $2: os directory
+# $3: db connections strin, default "/ as sysdba"
+function createDBDirectory {
+dir_name=$1
+dir_path=$2
+conn_str=${3:-"/ as sysdba"}
+# create directory for oracle database
+echo "创建数据库的directory"
+sqlplus -S "$conn_str" << EOF
+create or replace directory ${dir_name} as '${dir_path}';
+--grant read, write on directory ${dir_name} to system;
+grant read, write on directory ${dir_name} to sys;
+exit;
+EOF
+}
+
+# Description: generate parfile for expdp matedata_only
+# when source database is oracle11g or there is only one user.
+# 只有dpp.conf文件中remap_users有值的情况下，才会增加remap_schemas参数
+# parameters: 
+# $1: table list file, 
+# $2: parfile name
+
+function genExpMetaParFile(){
+	# Join username and tablename with comma, from cols in one line
+	tables=`awk '{print $1 "." $2}' "$1" | tr -t "\n" "," | sed -e 's/,$/\n/'`
+	# 替换parfile中的tables项的值
+	sed -i "/^tables=/c tables=${tables}" $2
+	# 先删除remap_schemas这项，为了程序可以重复执行
+	# sed -i "/remap_schema=/d" $2
+	# 如果取出的remap_schemas不等于空，才进行替换,此值在dpp.conf中已经自动生成
+	# 当不需要schema转换的时候，oracle11g中remap_schemas参数会导致错误，所以默认parfile中没有此项
+	#if [ "$remap_users" != "" ]; then
+	#	sed -i '$a\remap_schema='${remap_users}'' $2
+	#fi
+}
+
+
+# Description: generate parfile for impdp matedata_only
+# $1: meta parfile
+function genImpMetaParFile(){
+   imp_meta_parfile=$1
+	# 先删除import meta parfile中remap_schemas这项
+	sed -i "/remap_schema=/d" $imp_meta_parfile
+	# 如果取出的remap_schemas不等于空，才进行替换,此值在dpp.conf中已经自动生成
+	# 当不需要schema转换的时候，oracle11g中remap_schemas参数会导致错误，所以默认parfile中没有此项
+	if [ "$remap_users" != "" ]; then
+		sed -i '$a\remap_schema='${remap_users}'' $imp_meta_parfile
+	fi
+	sed -i "/^remap_tablespace=/c remap_tablespace=${remap_tbs}" $imp_meta_parfile
+	sed -i "/^logfile=/c logfile=${imp_meta_logfile}" $imp_meta_parfile
+}
+
+# descrition: create exp meta parfile by schemas, for oracle 10g
+#	on oracle 10g you can't exp multiusers' tables in one exp
+# parameters: 
+# $1: require file; 
+# $2: model of exp meta parfile
+
+function genExpMetaParFileByUser(){
+	is_file "$1"	
+	# create meta file by users 
+	awk '{print $1}' "$1" | sort | uniq |
+	while read line
+	do
+		rm -rf ./exp_meta.${line}.par
+		cp $2 ./exp_meta.${line}.par
+		sed -i "/^dumpfile=/c dumpfile=meta.${line}.dmp" ./exp_meta.${line}.par
+		sed -i "/^tables=/c tables=" ./exp_meta.${line}.par
+	done
+}
+
+# Description: mknod for tables on OCM/source database
+# parameters: 
+# $1: 需求文件或用户.表名
+# $2: 创建pipe文件的路径
+function makePipe(){
+   # 如果参数是文件，是批量创建的方式
+	if [ -f "$1" ]; then
+      rm -rf ${2}/*
+      tables=`awk '{print $1 "." $2}' $1 | tr -t "\n" " " | sed -e 's/ $/\n/'`
+      for pipe_name in ${tables}; do
+         mknod ${2}/${pipe_name} p
+      done
+   else
+      # 根据传如的user.table创建pipe node
+      rm -rf ${2}/$1
+      mknod ${2}/$1 p
+   fi
+}
+
+################################################
+# 功能：根据表名导入表数据,暂不支持表名的映射
+# 参数1: 用户名
+# 参数2: 表名
+# 参数3: 映射用户名
+# 参数4: 映射表名
+################################################
+function ImpDataByTable(){
+	username=$1
+	tablename=$2
+	tousername=$3
+   # 生成导入脚本文件
+   SCRIPTNAME=imp.${username}.${tablename}.sh
+   touch ${DPPDIR}/script/$SCRIPTNAME
+   # 清空脚本文件的内容
+	cat /dev/null > ${DPPDIR}/script/$SCRIPTNAME
+   # 清理导入日志
+   rm -rf ${DPPDIR}/log/imp.${username}.${tablename}.log
+   # 生成导入脚本
+	echo "nohup imp system/${tdb_system_pass}@${tnsname_tdb} commit=y ignore=y file=${DPPDIR}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${DPPDIR}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &" >> ${DPPDIR}/script/$SCRIPTNAME
+   # 脚本执行
+	bash ${DPPDIR}/script/$SCRIPTNAME
+}
+
+
+# 功能：生成导入脚本文件
+# $1: 输出要产生的脚本文件名
+# $2: 需求文件
+# $3: 数据库连接串
+function genImpScript(){
+    impshfile=$1
+    connstr=$3
+    workdir=${impshfile%/script/*}
+   # 生成导入脚本文件
+   touch $impshfile
+	cat /dev/null > $impshfile
+   if [ -f $2 ]; then
+	while read line
+	do
+		username=`echo $line | cut -d ' ' -f 1`
+		tablename=`echo $line | cut -d ' ' -f 2`
+		tousername=`echo $line | cut -d ' ' -f 3`
+      # 先清理日志
+       rm -rf ${workdir}/log/imp.${username}.${tablename}.log
+	    echo "nohup imp ${connstr} commit=y ignore=y file=${workdir}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${workdir}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &" >> $impshfile
+	done < $2
+else
+# 第三个参数为
+		username=`echo $line | cut -d '.' -f 1`
+		tablename=`echo $line | cut -d '.' -f 2`
+      tousername=$username
+      rm -rf ${workdir}/log/imp.${username}.${tablename}.log
+		echo "nohup imp ${connstr} commit=y ignore=y file=${workdir}/pipe/${username}.$tablename fromuser=$username touser=${tousername} buffer=602400000 log=${workdir}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &" >> $impshfile
+
+fi
+	chmod +x $impshfile
+}
+
+################################################
+# 获取数据scn号，并返回
+# 参数1：数据库连接串,若未指定参数，默认为"/ as sysdba"
+################################################
+function getCurrentScn(){
+deconstr="/ as sysdba"
+CONNSTR=${1:-$deconstr}
+CURRENT_SCN=`sqlplus -S "$CONNSTR" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+select to_char(current_scn,'999999999999999999') from v\\$database;
+exit;
+EOF`
+echo $(($CURRENT_SCN))
+}
+
+################################################
+# description: 根据单表名执行导出
+# 参数1: 用户名
+# 参数2: 表名
+# 参数3: 是否根据当前scn导出,yes / no
+#################################################
+function expDataByTable(){
+	username=$1
+	tablename=$2
+	SCRIPTNAME=${DPPDIR}/script/imp.${username}.${tablename}.sh
+   touch $SCRIPTNAME
+   cat /dev/null > $SCRIPTNAME
+	# 判断是否需要获取SDB当前的scn号,默认scn参数为空
+	scn_para=""
+   # 如果是否需要scn的参数值为yes，则生成scn，并组拼exp的参数串
+   if [ $3 == "yes" ]; then
+      scn_no=`getCurrentScn "system/$sdb_system_pass@$tnsname_sdb"`
+	   scn_para="FLASHBACK_SCN=${scn_no}" 
+   fi
+	rm -rf ${DPPDIR}/log/exp.${username}.${tablename}.log
+	echo "nohup exp system/${sdb_system_pass}@${tnsname_sdb} rows=y ${scn_para} CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${DPPDIR}/log/exp.${username}.${tablename}.log file=${DPPDIR}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &" >> SCRIPTNAME
+   # 执行导出脚本
+   bash $SCRIPTNAME
+}
+
+
+# description: 函数根据数据库当前scn每个表生成一行导出脚本，写入到脚本文件
+# $1: 输出的sh file 
+# $2: 需求文件
+# $3: 数据库连接串
+# $4: 是否根据snc号导出
+function genExpScript(){
+   connstr=$3
+   workdir=${1%/script/*}
+   touch $1
+	rm -rf ${workdir}/log/exp.*.log
+   cat /dev/null > $1
+   scn_para=""
+   if [ $4 == "yes" ]; then
+      scn_no=`getCurrentScn "$connstr"`
+	   scn_para="FLASHBACK_SCN=${scn_no}" 
+   fi
+	# 获取SDB当前的scn号
+	scn_no=`getCurrentScn`
+	while read line
+	do
+		username=`echo $line | cut -d ' ' -f 1`
+		tablename=`echo $line | cut -d ' ' -f 2`
+		echo "nohup exp ${connstr} ${scn_para} rows=y CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${workdir}/log/exp.${username}.${tablename}.log file=${workdir}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &" >> $1
+	done < $2
+	chmod +x $1
+}
+
+# 判断是否已经安装了sshpass工具，如果没有安装则自动安装
+function isInstallTool(){
+which $1>/dev/null 2>&1
+if [ "$?" -eq 1 ]; then 
+	echo "服务器没有安装$1。" 
+	exit
+fi
+}
+
+# 获取DPP当前工作进程状态和日志状态
+function getDDPStatus(){
+# 正在exp进程
+for pexp in $(ps -ef|grep exp|grep -v grep|awk -F' ' '{print $19}'|awk -F/ '{print $5}')
+do
+
+# 成功exp进程
+echo "getDDPStatus"
+# 异常exp进程
+
+done
+}
+
+function log {
+    echo -e "\n"
+    printf -- "$@"
+    echo -e "\n"
+}
