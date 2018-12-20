@@ -159,7 +159,7 @@ function genImpMetaParFile(){
 		sed -i '$a\remap_schema='${remap_users}'' $imp_meta_parfile
 	fi
 	if [ "$remap_tabs" != "null" ]; then
-   	sed -i "/^remap_tablespace=/c remap_tablespace=${remap_tbs}" $imp_meta_parfile
+   	sed -i '$a\remap_tablespace='${remap_tbs}'' $imp_meta_parfile
    fi
 }
 
@@ -171,9 +171,9 @@ function genImpMetaParFile(){
 function makePipe(){
    # 如果参数是文件，是批量创建的方式
 	if [ -f "$1" ]; then
-      rm -rf ${2}/*
       tables=`awk '{print $1 "." $2}' $1 | tr -t "\n" " " | sed -e 's/ $/\n/'`
       for pipe_name in ${tables}; do
+         rm -rf ${2}/${pipe_name}
          mknod ${2}/${pipe_name} p
       done
    else
@@ -213,9 +213,9 @@ function ImpDataByTable(){
 # $2: 需求文件
 # $3: 数据库连接串
 function genImpScript(){
-    impshfile=$1
-    connstr=$3
-    workdir=${impshfile%/script/*}
+   impshfile=$1
+   connstr=$3
+   workdir=${impshfile%/script/*}
    # 生成导入脚本文件
    touch $impshfile
 	cat /dev/null > $impshfile
@@ -233,8 +233,7 @@ function genImpScript(){
 # 参数1：数据库连接串,若未指定参数，默认为"/ as sysdba"
 ################################################
 function getCurrentScn(){
-deconstr="/ as sysdba"
-CONNSTR=${1:-$deconstr}
+CONNSTR=${1:-"/ as sysdba"}
 CURRENT_SCN=`sqlplus -S "$CONNSTR" << EOF
 set heading off feedback off pagesize 0 verify off echo off
 select to_char(current_scn,'999999999999999999') from v\\$database;
