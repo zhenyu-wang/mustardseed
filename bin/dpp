@@ -4,10 +4,12 @@
 # 功能描述：
 # 	此脚本根据传递的表执行导出和导入
 #	适用于单独对几个表进行导出导入，基于表结构已经同步完成
-# 2018-12-06 王振宇 created
+# 2018-12-06 zhenyu-wang created
 ##########################################################
 
 _CUR_USER=`whoami`
+# 数据库软件的OS用户
+_DB_OS_USER="oracle"
 # dpp脚本的目录
 _DPP_SCR_DIR=$(cd $(dirname ${BASH_SOURCE[0]}); pwd )
 # DPP的工作目录
@@ -19,6 +21,8 @@ _COMMON_FUNC=${DPPDIR}/funcs/commonfunctions
 # DPP默认配置文件路径
 _CONFIGFILE=${DPPDIR}/conf/dpp.conf
 
+# 加载公共函数
+source ${_COMMON_FUNC}
 # 加载函数
 source ${_DPP_FUNC}
 
@@ -38,8 +42,8 @@ function pyModCheck {
 # 检查使用ddp工具之前的前提条件检查函数
 function prerequisiteCheck {
    # 执行用户检查
-   if [ "$_CUR_USER" != "oracle" ]; then
-      log "当前操作系统用户不正确，请使用oracle用户执行 $0"
+   if [ "$_CUR_USER" != "$_DB_OS_USER" ]; then
+      log "当前操作系统用户不正确，请使用${_DB_OS_USER}用户执行 $0"
       exit
    fi
    # 软件检查
@@ -75,6 +79,7 @@ function usage {
    OCM需安装 sshpass, oracle 客户端, python模块:xlrd"
 }
 
+log "使用环境检查！"
 prerequisiteCheck
 
 # 设置变量TABLES内容均为大写
@@ -209,13 +214,12 @@ if [ "$TABLES"x != "x" ]; then
 
    # 检查源端数据库（SDB）、目标端数据库（TDB）的可连接性
    log "检查源端数据库（SDB）的可连接性"
-   echo "sdbstr:  $_SDB_CONN_STR"
    checkDBConnection "$_SDB_CONN_STR"
 
    log "检查目标端数据库（TDB）的可连接性"
    checkDBConnection "$_TDB_CONN_STR"
 
-   # 检查表在源端数据库（SDB）是否存在
+   # 检查表在源端数据库（SDB）是否存在,防止表名写错
    log "检查表在源端数据库（SDB）是否存在"
    isTableExist "${FROMUSER}.${FROMTAB}"
 
@@ -257,7 +261,7 @@ if [ -n "$_REQFILE" ]; then
    if [ "$_DPP_CONTENT" == "meta" ];
    then
       # 自动分析源端数据库与目标端数据库user的映射关系，并自动更新dpp.conf配置文件中相关配置项
-	   log "设置config file中的用户映射"
+      log "设置config file中的用户映射"
       setRemapUsers $DPPDIR/conf/tablelist.conf $_CONFIGFILE
 
       log "创建源端OS上的directory"
@@ -280,7 +284,8 @@ if [ -n "$_REQFILE" ]; then
 
       log "生成导入meta结构的parfile文件"
       genImpMetaParFile $DPPDIR/conf/imp_meta.par
-	   # 如果操作终端和SDB是同一台机器，工具部署在了SDB上
+
+      # 如果操作终端和SDB是同一台机器，工具部署在了SDB上
       if [ "$_OCM_IP" == "$sdb_ip" ]; then
          cp $DPPDIR/conf/exp_meta.par ${sdb_dir}
          # 执行结构导出
@@ -291,12 +296,13 @@ if [ -n "$_REQFILE" ]; then
          expdp \'/ as sysdba\' parfile=${sdb_dir}/exp_meta.par 
          # expdp $_SDB_LOCAL_CONN_STR parfile=${sdb_dir}/exp_meta.par 
 
-         # 如果OCM与TDB是同一台机器,说明SDB、TDB、OCM都在一台机器上
+			# 如果OCM与TDB是同一台机器,说明SDB、TDB、OCM都在一台机器上(未测试)
          # 不需要ssh操作
          if [ "$_OCM_IP" == "$tdb_ip" ]; then
-
+				log "SDB、TDB、OCM都在一台机器上"
             # 如果sdb的directory与tdb的directory不在同一个目录，则需要拷贝一下，否则什么都不做
             if [ $sdb_ip != $tdb_ip ]; then
+					log "SDB、TDB、OCM都在一台机器上，且SDB与TDB的directory不在同一个目录"
                cp ${sdb_dir}/meta.dmp ${tdb_dir}
                cp $DPPDIR/conf/imp_meta.par ${tdb_dir}
                # 执行结构导入

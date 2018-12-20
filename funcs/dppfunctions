@@ -47,7 +47,7 @@ exit;
 EOF`
 if [ $IFEXIST == "0" ]; then
 	((cou_noext_tab++));
-	echo "表: ${USERNAME}.$TABLENAME 在源端数据库中不存在。"
+	echo "表: ${USERNAME}.${TABLENAME} 在数据库中不存在。"
 fi
 done < $1
 # 如果参数是一个表名，则根据表名进行判断
@@ -60,9 +60,9 @@ set heading off feedback off pagesize 0 verify off echo off
 select count(*) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
 exit;
 EOF`
-if [ $IFEXIST == "0" ]; then
+if [ "$IFEXIST" == "0" ]; then
 	((cou_noext_tab++));
-	echo "表: ${USERNAME}.$TABLENAME 不存在。"
+	echo "表: ${USERNAME}.${TABLENAME} 在数据库中不存在。"
 fi
 fi
 # 如果发现了不存在的表，退出终止程序执行

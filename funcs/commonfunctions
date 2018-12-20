@@ -1,7 +1,6 @@
 #! /bin/env bash
 
-# functions for data pipe port tools
-# created on 2018-11-12, by wangzheny
+# created on 2018-11-20, by zhenyu-wang
 
 function is_file {
 	if [ ! -f "$1" ] ; then
