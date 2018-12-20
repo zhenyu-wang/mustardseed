@@ -230,16 +230,14 @@ if [ "$TABLES"x != "x" ]; then
    log "目标端数据库TDB truncate table ${TOUSER}.${TOTAB}"
    truncateTable "${TOUSER}.${TOTAB}" "$_TDB_CONN_STR"
 
-   # 以管道方式执行导数据
-   log "以管道方式执行导数据"
    log "创建pipe file"
-   makePipe "${FROMUSER}.${FROMTAB}"
+   makePipe "${FROMUSER}.${FROMTAB}" "$DPPDIR/pipe"
 
    log "执行导入"
-   ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER}
+   ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$DPPDIR" "$_TDB_CONN_STR"
 
    log "执行导出"
-   expDataByTable ${FROMUSER} ${FROMTAB} "$(if $WITHSCN; then echo yes;else echo no;fi;)"
+   expDataByTable ${FROMUSER} ${FROMTAB} "$(if $WITHSCN; then echo yes;else echo no;fi;)" "$DPPDIR" "$_TDB_CONN_STR"
 fi
 
 ################################################
@@ -283,7 +281,7 @@ if [ -n "$_REQFILE" ]; then
       genExpMetaParFile "$DPPDIR/conf/tablelist.conf" "$DPPDIR/conf/exp_meta.par"
 
       log "生成导入meta结构的parfile文件"
-      genImpMetaParFile $DPPDIR/conf/imp_meta.par
+      genImpMetaParFile $DPPDIR/conf/imp_meta.par $remap_users $remap_tbs
 
       # 如果操作终端和SDB是同一台机器，工具部署在了SDB上
       if [ "$_OCM_IP" == "$sdb_ip" ]; then

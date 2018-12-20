@@ -5,7 +5,7 @@
 
 function is_file {
 	if [ ! -f "$1" ] ; then
-		echo "文件:$1 不存在或文件路径及名称错误。"
+		echo "文件:$1 不存在或文件路径及名称错误"
 		exit 2
 	fi
 }
@@ -30,16 +30,15 @@ function handleFormat {
 # 判断要导的表在sourceDB是否都存在
 # $1: 表名 或 需求文件名
 # $2: 数据库连接串,默认值："/ as sysdba"
+
 function isTableExist {
 _conn_str=${2:-"/ as sysdba"}
 # 默认表都存在，否则则返回 0，终止程序执行
 cou_noext_tab=0
 # 如果参数是一个文件，则使用文件中的内容进行判断
 if [ -f $1 ]; then
-while read line
+while read USERNAME TABLENAME TOUSER TOTAB
 do
-USERNAME=`echo $line | cut -d ' ' -f 1`
-TABLENAME=`echo $line | cut -d ' ' -f 2` 
 IFEXIST=`sqlplus -S "${_conn_str}" << EOF
 set heading off feedback off pagesize 0 verify off echo off
 select count(*) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
@@ -53,8 +52,8 @@ done < $1
 # 如果参数是一个表名，则根据表名进行判断
 # 参数的格式为USER.TAB
 else
-USERNAME=`echo $1 | cut -d '.' -f 1 | tr [a-z] [A-Z]`
-TABLENAME=`echo $1 | cut -d '.' -f 2 | tr [a-z] [A-Z]` 
+USERNAME=${1%.*}
+TABLENAME=${1#*.}
 IFEXIST=`sqlplus -S "${_conn_str}" << EOF
 set heading off feedback off pagesize 0 verify off echo off
 select count(*) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
@@ -83,19 +82,18 @@ function setRemapUsers {
 	sed -i "/^remap_users=/c remap_users=\"${remap_users}\"" $2
 }
 
-# truncate TDB's tables
+# truncate DB's tables
 # 参数：
-#	1 数据库连接串
-#	2 tablename
+#	$1 username.tablename
+#	$2 database connection string
 function truncateTable {
-checkDBConnection $1
 (sqlplus -S "$1" << EOF
 truncate table $2;
 exit;
 EOF
 ) | grep -i "Table truncated" > /dev/null 2>&1
 if [ $? -ne 0 ]; then
-	echo "目标数据库中不存在表: $2"
+	echo "truncate $2 失败！"
 	exit
 fi
 }
@@ -103,7 +101,6 @@ fi
 # 检查数据库是否可以连接成功
 # 以数据库连接串作为参数
 function checkDBConnection {
-isInstallTool "sqlplus"
 (sqlplus -S "$1" << EOF
 select status from v\$instance;
 exit;
@@ -122,8 +119,6 @@ function createDBDirectory {
 dir_name=$1
 dir_path=$2
 conn_str=${3:-"/ as sysdba"}
-# create directory for oracle database
-echo "创建数据库的directory"
 sqlplus -S "$conn_str" << EOF
 create or replace directory ${dir_name} as '${dir_path}';
 --grant read, write on directory ${dir_name} to system;
@@ -144,49 +139,30 @@ function genExpMetaParFile(){
 	tables=`awk '{print $1 "." $2}' "$1" | tr -t "\n" "," | sed -e 's/,$/\n/'`
 	# 替换parfile中的tables项的值
 	sed -i "/^tables=/c tables=${tables}" $2
-	# 先删除remap_schemas这项，为了程序可以重复执行
-	# sed -i "/remap_schema=/d" $2
-	# 如果取出的remap_schemas不等于空，才进行替换,此值在dpp.conf中已经自动生成
-	# 当不需要schema转换的时候，oracle11g中remap_schemas参数会导致错误，所以默认parfile中没有此项
-	#if [ "$remap_users" != "" ]; then
-	#	sed -i '$a\remap_schema='${remap_users}'' $2
-	#fi
 }
 
 
 # Description: generate parfile for impdp matedata_only
 # $1: meta parfile
+# $2: remap_users
+# $3: remap_tabspace
 function genImpMetaParFile(){
    imp_meta_parfile=$1
-	# 先删除import meta parfile中remap_schemas这项
+   remap_users=${2:-null}
+   remap_tabs=${3:-null}
+	# 先删除import meta parfile中remap_schemas,remap_tablespace项
 	sed -i "/remap_schema=/d" $imp_meta_parfile
+	sed -i "/remap_tablespace=/d" $imp_meta_parfile
 	# 如果取出的remap_schemas不等于空，才进行替换,此值在dpp.conf中已经自动生成
 	# 当不需要schema转换的时候，oracle11g中remap_schemas参数会导致错误，所以默认parfile中没有此项
-	if [ "$remap_users" != "" ]; then
+	if [ "$remap_users" != "null" ]; then
 		sed -i '$a\remap_schema='${remap_users}'' $imp_meta_parfile
 	fi
-	sed -i "/^remap_tablespace=/c remap_tablespace=${remap_tbs}" $imp_meta_parfile
-	sed -i "/^logfile=/c logfile=${imp_meta_logfile}" $imp_meta_parfile
+	if [ "$remap_tabs" != "null" ]; then
+   	sed -i "/^remap_tablespace=/c remap_tablespace=${remap_tbs}" $imp_meta_parfile
+   fi
 }
 
-# descrition: create exp meta parfile by schemas, for oracle 10g
-#	on oracle 10g you can't exp multiusers' tables in one exp
-# parameters: 
-# $1: require file; 
-# $2: model of exp meta parfile
-
-function genExpMetaParFileByUser(){
-	is_file "$1"	
-	# create meta file by users 
-	awk '{print $1}' "$1" | sort | uniq |
-	while read line
-	do
-		rm -rf ./exp_meta.${line}.par
-		cp $2 ./exp_meta.${line}.par
-		sed -i "/^dumpfile=/c dumpfile=meta.${line}.dmp" ./exp_meta.${line}.par
-		sed -i "/^tables=/c tables=" ./exp_meta.${line}.par
-	done
-}
 
 # Description: mknod for tables on OCM/source database
 # parameters: 
@@ -213,22 +189,22 @@ function makePipe(){
 # 参数2: 表名
 # 参数3: 映射用户名
 # 参数4: 映射表名
+# 参数5: 工作路径
+# 参数6: 数据库连接串
 ################################################
 function ImpDataByTable(){
 	username=$1
 	tablename=$2
 	tousername=$3
    # 生成导入脚本文件
-   SCRIPTNAME=imp.${username}.${tablename}.sh
-   touch ${DPPDIR}/script/$SCRIPTNAME
+   # SCRIPTNAME=${5}/script/imp.${username}.${tablename}.sh
+   # touch $SCRIPTNAME
    # 清空脚本文件的内容
-	cat /dev/null > ${DPPDIR}/script/$SCRIPTNAME
+	# cat /dev/null > $SCRIPTNAME
    # 清理导入日志
-   rm -rf ${DPPDIR}/log/imp.${username}.${tablename}.log
-   # 生成导入脚本
-	echo "nohup imp system/${tdb_system_pass}@${tnsname_tdb} commit=y ignore=y file=${DPPDIR}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${DPPDIR}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &" >> ${DPPDIR}/script/$SCRIPTNAME
-   # 脚本执行
-	bash ${DPPDIR}/script/$SCRIPTNAME
+   rm -rf ${5}/log/imp.${username}.${tablename}.log
+   # 生成并执行入脚本
+	eval "nohup imp ${6} commit=y ignore=y file=${5}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${5}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &"
 }
 
 
@@ -243,25 +219,12 @@ function genImpScript(){
    # 生成导入脚本文件
    touch $impshfile
 	cat /dev/null > $impshfile
-   if [ -f $2 ]; then
-	while read line
+	while read username tablename tousername totabname query
 	do
-		username=`echo $line | cut -d ' ' -f 1`
-		tablename=`echo $line | cut -d ' ' -f 2`
-		tousername=`echo $line | cut -d ' ' -f 3`
       # 先清理日志
-       rm -rf ${workdir}/log/imp.${username}.${tablename}.log
-	    echo "nohup imp ${connstr} commit=y ignore=y file=${workdir}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${workdir}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &" >> $impshfile
-	done < $2
-else
-# 第三个参数为
-		username=`echo $line | cut -d '.' -f 1`
-		tablename=`echo $line | cut -d '.' -f 2`
-      tousername=$username
       rm -rf ${workdir}/log/imp.${username}.${tablename}.log
-		echo "nohup imp ${connstr} commit=y ignore=y file=${workdir}/pipe/${username}.$tablename fromuser=$username touser=${tousername} buffer=602400000 log=${workdir}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &" >> $impshfile
-
-fi
+	   echo "nohup imp ${connstr} commit=y ignore=y file=${workdir}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${workdir}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &" >> $impshfile
+	done < $2
 	chmod +x $impshfile
 }
 
@@ -285,24 +248,24 @@ echo $(($CURRENT_SCN))
 # 参数1: 用户名
 # 参数2: 表名
 # 参数3: 是否根据当前scn导出,yes / no
+# 参数4: 工作目录
+# 参数5: 数据库连接串
 #################################################
 function expDataByTable(){
 	username=$1
 	tablename=$2
-	SCRIPTNAME=${DPPDIR}/script/imp.${username}.${tablename}.sh
-   touch $SCRIPTNAME
-   cat /dev/null > $SCRIPTNAME
+	# SCRIPTNAME=${DPPDIR}/script/imp.${username}.${tablename}.sh
+   # touch $SCRIPTNAME
+   # cat /dev/null > $SCRIPTNAME
 	# 判断是否需要获取SDB当前的scn号,默认scn参数为空
 	scn_para=""
    # 如果是否需要scn的参数值为yes，则生成scn，并组拼exp的参数串
-   if [ $3 == "yes" ]; then
-      scn_no=`getCurrentScn "system/$sdb_system_pass@$tnsname_sdb"`
+   if [ "$3" == "yes" ]; then
+      scn_no=`getCurrentScn "$5"`
 	   scn_para="FLASHBACK_SCN=${scn_no}" 
    fi
-	rm -rf ${DPPDIR}/log/exp.${username}.${tablename}.log
-	echo "nohup exp system/${sdb_system_pass}@${tnsname_sdb} rows=y ${scn_para} CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${DPPDIR}/log/exp.${username}.${tablename}.log file=${DPPDIR}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &" >> SCRIPTNAME
-   # 执行导出脚本
-   bash $SCRIPTNAME
+	rm -rf ${4}/log/exp.${username}.${tablename}.log
+	eval "nohup exp ${5} rows=y ${scn_para} CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${4}/log/exp.${username}.${tablename}.log file=${4}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &"
 }
 
 
@@ -322,12 +285,9 @@ function genExpScript(){
       scn_no=`getCurrentScn "$connstr"`
 	   scn_para="FLASHBACK_SCN=${scn_no}" 
    fi
-	# 获取SDB当前的scn号
-	scn_no=`getCurrentScn`
-	while read line
+
+	while read username tablename tousername totabname query
 	do
-		username=`echo $line | cut -d ' ' -f 1`
-		tablename=`echo $line | cut -d ' ' -f 2`
 		echo "nohup exp ${connstr} ${scn_para} rows=y CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${workdir}/log/exp.${username}.${tablename}.log file=${workdir}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &" >> $1
 	done < $2
 	chmod +x $1
