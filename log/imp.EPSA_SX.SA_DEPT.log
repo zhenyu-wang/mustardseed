@@ -1,0 +1,10 @@
+
+Connected to: Oracle Database 11g Enterprise Edition Release 11.2.0.4.0 - 64bit Production
+With the Partitioning, OLAP, Data Mining and Real Application Testing options
+
+Export file created by EXPORT:V11.02.00 via direct path
+import done in US7ASCII character set and AL16UTF16 NCHAR character set
+import server uses ZHS16GBK character set (possible charset conversion)
+. importing EPSA_SX's objects into EPSA_SX_FK
+. . importing table                      "SA_DEPT"          0 rows imported
+Import terminated successfully without warnings.

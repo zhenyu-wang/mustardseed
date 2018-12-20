@@ -1,0 +1,88 @@
+#! /bin/bash
+
+################################################################################################
+# 功能描述 :此脚本最初是根据《分布式量费》ogg源端营销数据库extract进程keycols的需求而编写
+#           为防止数据库中表的附加日志发生变化, 而影响量费的计算结果, 编写此脚本
+#           脚本会根据extract prm参数配置文件的内容,自动检查数据库中表的附加日志是否满足要求 
+# 使用方法 :根据实际情况修改变量GG_HOME, prmfile的值, 之后执行(使用goldengate的用户)此脚本 
+#           根据输出的内容进行完善, 脚本不会自动执行附加日志操作, 但会输出相应脚本以供执行
+#           如果没有输出，说明附加日志满足要求
+# 使用限制 :适用 goldengate 11g, OS:RHEL6/7
+# 使用时机 :在每次数据库表结构发生变更后或ogg环境调整之后, 执行此脚本
+# 2018-11-12, by wangzhenyu 
+# version: 0.1
+#################################################################################################
+
+GG_HOME="/app/ogg"
+prmfile="$GG_HOME/dirprm/ext_yx.prm"
+
+if [ ! -f ${prmfile} ]; then
+   echo "参数文件: ${prmfile} 不存在"
+   exit 2
+fi
+
+# 获取ogg登陆字符串
+dbloginstr=`grep -i -E 'userid.+password' ${prmfile}`
+
+# 设置变量名的分割符, 每个变量以"username分隔符tablename"为名字
+repstr="512"
+
+# 设置不存在附加日志的判断串
+disstr="log data is disabled"
+
+# 设置已经添加了附加日志的判断串
+strSupCols="Columns supplementally logged for"
+
+# 设置数据库中不存在此表的判断串
+nostr="No viable tables matched"
+
+grep -i ^table ${prmfile} |
+while read line
+   do
+      unset tabname varname cmdstr
+      tabname=`echo $line | grep -o -E '\w{1,}\.\w{1,}' | tr 'a-z' 'A-Z'`
+      # 以自定义的分割符替换".", 因为变量名非法
+      varname=`echo $tabname | sed "s/\./${repstr}/g"`
+      # 所有转换成大写
+      addcols=`echo $line | grep -o -E '\(.+\)' | tr 'a-z' 'A-Z'`
+      valcol=`echo $addcols | sed -e 's/,/ /g' -e 's/(/"/g' -e 's/)/"/g'`
+      # 执行并赋值, 保存每个表需要的附加列(keycols 需求)
+      eval "${varname}=${valcol}"
+      # 取prm文件中的附加列
+      keycols=`eval echo "$"$varname`
+      cmdstr="info trandata ${tabname}"
+      result=`echo -e "dblogin ${dbloginstr}\n${cmdstr}" | $GG_HOME/ggsci | grep "${disstr}\|${strSupCols}\|${nostr}"`
+
+      # table not exists
+      if [[ $result =~ $nostr ]]; then
+         echo "数据库中不存在表: $tabname"
+      # no trandata
+
+      elif [[ $result =~ $disstr ]]; then
+         if [ "$keycols" != "" ]; then
+            echo "表: ${tabname} 没有添加附加日志, ADD TRANDATA ${tabname}, cols${addcols}"
+         else
+            echo "表: ${tabname} 没有添加附加日志, ADD TRANDATA ${tabname}"
+         fi
+
+      # exits trandata
+      elif [[ $result =~ $strSupCols ]]; then
+         tranedcols=`echo $result | grep -o -E ':.+\.$'`
+
+         # 如果额外定义了列(参数文件中定义了keycols),需要比较
+         if [[ "$keycols" != "" ]]; then
+            #echo "$keycols"
+            # 从需求中取每一个字段与查询结果比较
+            for col in ${keycols}; do
+               #echo "col: --- $col"
+               if [[ $tranedcols =~ $col ]]; then
+                  # 数据中包含此列的附加日志,什么都不做
+                  continue 
+               else
+                  echo "表: ${tabname} 缺少列 ${col} 上的附加日志, DELETE trandata ${tabname} first, then ADD trandata ${tabname}, cols${addcols}"
+                  break 
+               fi                
+            done  
+         fi
+      fi
+   done

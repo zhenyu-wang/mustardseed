@@ -1,0 +1,349 @@
+#! /usr/bin/bash
+
+##########################################################
+# 功能描述：
+# 	此脚本根据传递的表执行导出和导入
+#	适用于单独对几个表进行导出导入，基于表结构已经同步完成
+# 2018-12-06 王振宇 created
+##########################################################
+
+_CUR_USER=`whoami`
+# dpp脚本的目录
+_DPP_SCR_DIR=$(cd $(dirname ${BASH_SOURCE[0]}); pwd )
+# DPP的工作目录
+DPPDIR=${_DPP_SCR_DIR%/*}
+# DPP函数文件路径
+_DPP_FUNC=${DPPDIR}/funcs/dppfunctions
+# 公共函数文件路径
+_COMMON_FUNC=${DPPDIR}/funcs/commonfunctions
+# DPP默认配置文件路径
+_CONFIGFILE=${DPPDIR}/conf/dpp.conf
+
+# 加载函数
+source ${_DPP_FUNC}
+
+# 校验是否安装了pytho某个模块的函数
+function pyModCheck {
+   if python -c "import $1" >/dev/null 2>&1
+   then
+      echo "python 模块 $1 ----已经安装"
+   else
+      echo -e "未安装 python模块 $1 \n \
+      请使用root用户到 $DPPDIR/tools/${1} 下 \n \
+      执行： python setup.py install 进行安装"
+      exit
+   fi
+}
+
+# 检查使用ddp工具之前的前提条件检查函数
+function prerequisiteCheck {
+   # 执行用户检查
+   if [ "$_CUR_USER" != "oracle" ]; then
+      log "当前操作系统用户不正确，请使用oracle用户执行 $0"
+      exit
+   fi
+   # 软件检查
+   isInstallTool "sshpass"
+   # isInstallTool "sqlplus"
+   # isInstallTool "expdp"
+   # isInstallTool "exp"
+   # isInstallTool "sqlplus"
+   pyModCheck "xlrd"
+}
+
+function usage {
+	echo -e "Usage: $0 [--confile={config file}] \n \
+[--reqfile={reqfile name} --content=meta|data] \n \
+[--tables=fromuser.oldtable[:touser[.newtable]]] \n \
+[--tabwhere=fromuser.oldtable:query_condition] \n \
+[--check=all|configfile|tables] \n \
+[--status=all|fromuser.tablename] \n \
+[--withscn] \n \
+[-h|-help|--help]"
+   echo -e "\n \
+   功能说明：\n \
+   根据需求文件批量导出导入、或根据单表执行导出导入 \n \
+   --confile 可选，指定配置文件的位置，默认加载 conf/dpp.conf \n \
+   --tables=参数格式: 多个表以,相隔,user1.tab1:user2:tab2,user1.tab2:user2 目前仅支持用户名的remap \n \
+   --status 实时监控查看指定表当前的导出、导入状态 \n \
+   --withscn 仅在使用--tables或--reqfile时指定
+   --reqfile 按指定的需求文件执行导出导入，与--content必须同时指定，文件类型必须为excel文件，文件名必须为英文字母 \n \
+   不能同时指定--reqfile和--tables"
+   echo -e "\n \
+   使用前提：\n \
+   DPP工具需要运行在一台linux服务器上，作为操作终端(OCM)，也可以将源端数据库作为操作终端 \n \
+   OCM需安装 sshpass, oracle 客户端, python模块:xlrd"
+}
+
+prerequisiteCheck
+
+# 设置变量TABLES内容均为大写
+typeset -u TABLES
+TABLES=""
+# 是否选择根据SDB当前scn号导出数据,默认不使用
+WITHSCN=false
+# 需求文件默认不指定
+_REQFILE=""
+# 导出内容默认不指定
+_DPP_CONTENT=""
+# 参数的总数量,初始为0个参数
+_COU_ARGS=0
+
+_TO_GETSTATUS=""
+_TO_CHECK=""
+
+# set之后的--代表set的内容中如果存在- ,不将其作为参数
+# "$@"之前的--是为了最后参数的处理结束判断
+TMPARGS=$(getopt -o "h" -al "status:,help,confile:,tables:,check:,content:,withscn,reqfile:" -- "$@")
+
+eval set -- $TMPARGS
+
+while [[ ${1##-*} = "" ]]
+do
+   # 总参数个数+1
+   ((_COU_ARGS++))
+
+	case "$1" in
+	  	-tables | --tables )
+	    	# 三种参数格式，匹配其中一种即为合法，其中 -x 参数是整行匹配，必须添加，否则aa.bb?也会认为是合法的
+         # -z 若长度为0，没有匹配成功
+			if [ -z $(echo $2 | grep -x -E '\w+\.\w+\:\w+|\w+\.\w+|\w+\.\w+\:\w+.\w+') ]; then
+			   usage
+			   exit
+			fi
+			echo "tables原始值：$2"
+			TABLES=${2}
+			shift 2;;
+		-h | -help | --help )
+         # 如果指定了-h，则不做任何操作，显示帮助信息并推出程序
+         usage
+         exit
+         ;;
+		-check | --check )
+			echo "check value:  $2"
+		   shift 2;;
+		-status | --status )
+			_TO_GETSTATUS=$2
+		   shift 2;;
+		-reqfile | --reqfile )
+			_REQFILE=$2
+			is_file $_REQFILE
+         _EXT_NAME=${_REQFILE##*.}
+         if [ "$_EXT_NAME" != "xls" ] && [ "$_EXT_NAME" != "xlsx"  ]; then
+            log "需求文件的类型必须为excel,文件扩展名必须为xls或xlsx"
+            usage
+            exit
+         fi
+		   shift 2;;
+		-content | --content )
+			_DPP_CONTENT=$2
+         if [ "$_DPP_CONTENT" != "meta" -a  "$_DPP_CONTENT" != "data" ]; then 
+            log "--content的值只能为meta或all"
+            usage
+            exit
+         fi
+		   shift 2;;
+		-confile | --confile )
+			is_file $2
+			_CONFIGFILE=$2
+			echo "config file :  $_CONFIGFILE"
+		   shift 2;;
+		-withscn | --withscn )
+			WITHSCN=true
+		   shift;;
+		--) 
+         # 在这里判断参数组合的逻辑是否符合要求,因为到了 --，已经是最后一个参数
+
+         # 如果到了最后一个参数--了，参数的个数为1，说明没有指定任何参数，则显示帮助信息
+         if [ $_COU_ARGS -eq 1 ]; then log "请指定参数！"; usage; exit; fi;
+
+         # --tables与--reqfile不能同时指定
+         if [ -n "$TABLES" ] && [ -n "$_REQFILE" ]; then log "--tables和--reqfile不能同时指定"; usage; exit; fi;
+
+         # 指定--reqfile时必须同时指定--content
+         if [ -n "$_REQFILE" ] && [ -z "$_DPP_CONTENT" ]; then log "指定--reqfile时必须同时指定--content"; usage; exit; fi;
+
+         # --status只能单独指定，不能与其它参数同时使用
+         if [ -n "$_TO_GETSTATUS" -a $_COU_ARGS -ge 3 ]; then log "--status 只能单独指定，不能与其它参数同时使用"; usage; exit; fi;
+
+         shift
+			break
+			;;
+      *)
+         log "参数 $1 不合规"
+         usage
+         break
+         ;;
+	esac
+done
+
+# 先判断和加载配置文件 config file，默认加载 conf/dpp.conf
+# 当手动指定了--conffile参数时，则加载指定的配置文件
+source $_CONFIGFILE
+
+# SDB, TDB 数据库连接串
+_SDB_CONN_STR="system/$sdb_system_pass@$tnsname_sdb"
+_TDB_CONN_STR="system/$tdb_system_pass@$tnsname_tdb"
+
+# SDB 本地执行的数据库连接串
+_SDB_LOCAL_CONN_STR="\'/ as sysdba\'"
+
+# 获得操作终端的IP地址，用于判断OCM是否布置在了SDB上
+_OCM_IP=`hostname -i|cut -d' ' -f 2`
+
+# 如果以表的方式执行导出导入
+if [ "$TABLES"x != "x" ]; then
+   # 取第一个.之前的内容，即为fromuser，%%从后开始匹配 .* ，并从删除最长的匹配，保证只剩下fromuser
+   FROMUSER=${TABLES%%.*}
+   echo "fromuser: $FROMUSER"
+   # touser如果取到的值为空，那么设置为与fromuser相同
+   TOUSER=$(echo $TABLES | awk -F ':' '{print $2}' | awk -F '.' '{print $1}')
+   TOUSER=${TOUSER:-$FROMUSER}
+   echo "touser:  $TOUSER"
+   FROMTAB=$(echo $TABLES | awk -F ':' '{print $1}' | awk -F '.' '{print $2}')
+   echo "fromtab: $FROMTAB"
+   # totab如果取到的值为空，那么设置为与frotab相同
+   TOTAB=$(echo $TABLES | awk -F ':' '{print $2}' | awk -F '.' '{print $2}')
+   TOTAB=${TOTAB:-$FROMTAB}
+   echo "totab: $TOTAB"
+
+   # 检查源端数据库（SDB）、目标端数据库（TDB）的可连接性
+   log "检查源端数据库（SDB）的可连接性"
+   echo "sdbstr:  $_SDB_CONN_STR"
+   checkDBConnection "$_SDB_CONN_STR"
+
+   log "检查目标端数据库（TDB）的可连接性"
+   checkDBConnection "$_TDB_CONN_STR"
+
+   # 检查表在源端数据库（SDB）是否存在
+   log "检查表在源端数据库（SDB）是否存在"
+   isTableExist "${FROMUSER}.${FROMTAB}"
+
+   # 检查表在目标端数据库（TDB）是否存在，存在则执行truncate table，不存在则提示检查目标用户名和表名是否正确。
+   log "检查表在目标端数据库（TDB）是否存在"
+   isTableExist "${TOUSER}.${TOTAB}"
+
+   log "目标端数据库TDB truncate table ${TOUSER}.${TOTAB}"
+   truncateTable "${TOUSER}.${TOTAB}" "$_TDB_CONN_STR"
+
+   # 以管道方式执行导数据
+   log "以管道方式执行导数据"
+   log "创建pipe file"
+   makePipe "${FROMUSER}.${FROMTAB}"
+
+   log "执行导入"
+   ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER}
+
+   log "执行导出"
+   expDataByTable ${FROMUSER} ${FROMTAB} "$(if $WITHSCN; then echo yes;else echo no;fi;)"
+fi
+
+################################################
+# 如果以需求文件的方式批量导出导入表
+# 文件为excel文件，格式参考帮助文档
+################################################
+if [ -n "$_REQFILE" ]; then
+   log "检查源端数据库（SDB）的可连接性"
+   checkDBConnection "$_SDB_CONN_STR"
+   log "检查目标端数据库（TDB）的可连接性"
+   checkDBConnection "$_TDB_CONN_STR"
+   log "开始按需求文件 $_REQFILE 中所列的表执行导出导入"
+   log "解析和处理需求文件,最终生成tablelist.conf在conf下"
+   python $DPPDIR/funcs/genTableList.py $_REQFILE|tr [a-z] [A-Z]|sed 's/[ \t]*$//g'>$DPPDIR/conf/tablelist.conf
+   log "检查要导的表在SDB中是否存在"
+   isTableExist "$DPPDIR/conf/tablelist.conf" "$_SDB_CONN_STR"
+
+   # 根据指定同步的内容content执行操作,在参数组合控制逻辑中已经限制必须指定--content参数
+   if [ "$_DPP_CONTENT" == "meta" ];
+   then
+      # 自动分析源端数据库与目标端数据库user的映射关系，并自动更新dpp.conf配置文件中相关配置项
+	   log "设置config file中的用户映射"
+      setRemapUsers $DPPDIR/conf/tablelist.conf $_CONFIGFILE
+
+      log "创建源端OS上的directory"
+      sshpass -p ${sdb_oracle_pass} ssh -p ${sdb_ssh_port} ${sdb_ip} mkdir -p ${sdb_dir}
+
+      log "创建目标端端OS上的directory"
+      sshpass -p ${tdb_oracle_pass} ssh -p ${tdb_ssh_port} ${tdb_ip} mkdir -p ${tdb_dir}
+
+      log "创建SDB的directory"
+      createDBDirectory "$sdb_dir_name" "$sdb_dir" "$_SDB_CONN_STR"
+
+      log "创建TDB的directory"
+      createDBDirectory "$tdb_dir_name" "$tdb_dir" "$_TDB_CONN_STR"
+
+      # 生成导出结构的parfile文件,文件存放在源端DB directory下
+      # 需求文件 存放在操作终端上OCM（可以是SDB服务器,也可以是TDB服务器）
+      # parfile文件生成后先保存在OCM上，然后再拷贝到SDB的oracle directory下
+      log "生成导出meta结构的parfile文件"
+      genExpMetaParFile "$DPPDIR/conf/tablelist.conf" "$DPPDIR/conf/exp_meta.par"
+
+      log "生成导入meta结构的parfile文件"
+      genImpMetaParFile $DPPDIR/conf/imp_meta.par
+	   # 如果操作终端和SDB是同一台机器，工具部署在了SDB上
+      if [ "$_OCM_IP" == "$sdb_ip" ]; then
+         cp $DPPDIR/conf/exp_meta.par ${sdb_dir}
+         # 执行结构导出
+         # 为了可以重复导出，先删除SDB上的dmp文件和log文件
+         rm -rf ${sdb_dir}/meta.dmp ${sdb_dir}/exp.meta.log
+         # 执行备份结构,结构保存到了SDB服务器上,同时也是OCM上
+         log "SDB上执行导出"
+         expdp \'/ as sysdba\' parfile=${sdb_dir}/exp_meta.par 
+         # expdp $_SDB_LOCAL_CONN_STR parfile=${sdb_dir}/exp_meta.par 
+
+         # 如果OCM与TDB是同一台机器,说明SDB、TDB、OCM都在一台机器上
+         # 不需要ssh操作
+         if [ "$_OCM_IP" == "$tdb_ip" ]; then
+
+            # 如果sdb的directory与tdb的directory不在同一个目录，则需要拷贝一下，否则什么都不做
+            if [ $sdb_ip != $tdb_ip ]; then
+               cp ${sdb_dir}/meta.dmp ${tdb_dir}
+               cp $DPPDIR/conf/imp_meta.par ${tdb_dir}
+               # 执行结构导入
+               # 先删除TDB(本地服务器)上的log文件
+               rm -rf ${tdb_dir}/imp.meta.log
+               impdp \'/ as sysdba\' parfile=${tdb_dir}/imp_meta.par
+            fi
+
+         # 如果OCM与TDB不是同一台机器,也就是说SDB与TDB也不在同一台机器上
+         else
+            # 通过ssh将dmp文件从本地拷贝到TDB上
+            log "同步SDB的dmp文件到TDB服务器上"
+            sshpass -p ${tdb_oracle_pass} scp -P ${tdb_ssh_port} ${sdb_dir}/meta.dmp ${tdb_ip}:${tdb_dir}
+            # 将导入结构的parfile拷贝到目标端机器上
+            log "同步导入结构的parfile文件到SDB服务器上"
+            sshpass -p ${tdb_oracle_pass} scp -P ${tdb_ssh_port} $DPPDIR/conf/imp_meta.par ${tdb_ip}:${tdb_dir}
+            log "将导入脚本拷贝到TDB服务器上"
+            sed -i "s&parfile=.*$&parfile=${tdb_dir}/imp_meta.par&g" $DPPDIR/script/tdb_imp_meta.sh
+            sshpass -p ${tdb_oracle_pass} scp -P ${tdb_ssh_port} $DPPDIR/script/tdb_imp_meta.sh ${tdb_ip}:${tdb_dir}
+            # 执行结构导入
+            # 先删除TDB上的log文件
+            sshpass -p ${tdb_oracle_pass} ssh -p ${tdb_ssh_port} ${tdb_ip} rm -rf ${tdb_dir}/imp.meta.log
+            log "TDB 执行结构导入"
+            sshpass -p ${tdb_oracle_pass} ssh -p ${tdb_ssh_port} ${tdb_ip} $tdb_dir/tdb_imp_meta.sh
+         fi
+
+      # 如果操作终端不在SDB上(暂未测试)
+      else
+         log "如果操作终端不在SDB上"
+         echo "ocm_ip:  $_OCM_IP"
+#         sshpass -p ${sdb_oracle_pass} scp -P ${sdb_ssh_port} $DPPDIR/conf/exp_meta.par ${sdb_ip}:${sdb_dir}
+#         # 执行结构导出
+#         # 为了可以重复导出，先删除SDB上的dmp文件和log文件
+#         sshpass -p ${sdb_oracle_pass} ssh -p ${sdb_ssh_port} ${sdb_ip} rm -rf ${sdb_dir}/meta.dmp ${sdb_dir}/exp.meta.log
+#         sshpass -p ${sdb_oracle_pass} ssh -p ${sdb_ssh_port} ${sdb_ip} expdp "$_SDB_LOCAL_CONN_STR" parfile=${sdb_dir}/exp_meta.par
+      fi
+   elif [ "$_DPP_CONTENT" == "data" ]; then
+      log "创建pipe在OCM上"
+      makePipe $DPPDIR/conf/tablelist.conf $DPPDIR/pipe
+      log "生成导入数据的脚本,保存到OCM conf下"
+      genImpScript ${DPPDIR}/script/imp_meta.sh $DPPDIR/conf/tablelist.conf $_TDB_CONN_STR
+      log "执行数据导入"
+      ${DPPDIR}/script/imp_meta.sh
+ 
+      log "生成导出脚本"
+      genExpScript ${DPPDIR}/script/exp_meta.sh $DPPDIR/conf/tablelist.conf $_SDB_CONN_STR "$(if $WITHSCN; then echo yes;else echo no;fi;)"
+      log "执行数据导出"
+      ${DPPDIR}/script/exp_meta.sh
+   fi
+fi

@@ -1,0 +1,8 @@
+remap_tablespace=%:tbsdata
+directory=TDB_DIR
+dumpfile=meta.dmp
+cluster=N
+transform=storage:n
+table_exists_action=replace
+logfile=imp_meta.log
+remap_schema=EPSA_SX:EPSA_SX_FK
