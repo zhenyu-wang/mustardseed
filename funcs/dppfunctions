@@ -87,13 +87,13 @@ function setRemapUsers {
 #	$1 username.tablename
 #	$2 database connection string
 function truncateTable {
-(sqlplus -S "$1" << EOF
-truncate table $2;
+(sqlplus -S "$2" << EOF
+truncate table $1;
 exit;
 EOF
 ) | grep -i "Table truncated" > /dev/null 2>&1
 if [ $? -ne 0 ]; then
-	echo "truncate $2 失败！"
+	echo "truncate $1 失败！"
 	exit
 fi
 }
@@ -196,11 +196,6 @@ function ImpDataByTable(){
 	username=$1
 	tablename=$2
 	tousername=$3
-   # 生成导入脚本文件
-   # SCRIPTNAME=${5}/script/imp.${username}.${tablename}.sh
-   # touch $SCRIPTNAME
-   # 清空脚本文件的内容
-	# cat /dev/null > $SCRIPTNAME
    # 清理导入日志
    rm -rf ${5}/log/imp.${username}.${tablename}.log
    # 生成并执行入脚本
@@ -253,15 +248,13 @@ echo $(($CURRENT_SCN))
 function expDataByTable(){
 	username=$1
 	tablename=$2
-	# SCRIPTNAME=${DPPDIR}/script/imp.${username}.${tablename}.sh
-   # touch $SCRIPTNAME
-   # cat /dev/null > $SCRIPTNAME
 	# 判断是否需要获取SDB当前的scn号,默认scn参数为空
 	scn_para=""
    # 如果是否需要scn的参数值为yes，则生成scn，并组拼exp的参数串
    if [ "$3" == "yes" ]; then
       scn_no=`getCurrentScn "$5"`
 	   scn_para="FLASHBACK_SCN=${scn_no}" 
+      echo "数据库SCN号为 : ${scn_no}"
    fi
 	rm -rf ${4}/log/exp.${username}.${tablename}.log
 	eval "nohup exp ${5} rows=y ${scn_para} CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${4}/log/exp.${username}.${tablename}.log file=${4}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &"
@@ -318,4 +311,100 @@ function log {
     echo -e "\n"
     printf -- "$@"
     echo -e "\n"
+}
+
+#-----------------------------------------
+# 根据用户名和表名生成导出脚本和parfile
+# $1: fromuser.fromtab
+# $2: parfile
+# $3: parfile template
+# $4: expdp script file
+# $5: expdp script file template
+#-----------------------------------------
+function genExpMetaParFileByTable(){
+   usertab=$1
+   parfile=$2
+   temp_par=$3
+   scrfile=$4
+   temp_spt=$5
+   cp ${temp_par} ${parfile}
+	# 替换parfile中的tables项的值
+	sed -i "/^tables=/c tables=${usertab}" $parfile
+   # 替换dumpfile的值
+	sed -i "/^dumpfile=/c dumpfile=meta.${usertab}.dmp" $parfile
+
+   cp ${temp_spt} ${scrfile}
+	# 替换expdp scritpfile中的parfile项的值
+	sed -i "/parfile=.*$/c parfile=${parfile}" ${scrfile}
+}
+
+#-----------------------------------------
+# $1: fromuser
+# $2: fromtable
+# $3: touser
+# $4: totable
+# $5: parfile
+# $6: parfile template
+# $7: impdp script file 
+# $8: impdp script file template
+#-----------------------------------------
+function genImpMetaParFileByTable(){
+   cp $6 $5
+	# 替换parfile中的tables项的值
+	sed -i "/^tables=/c tables=${1}" $5
+   # 替换dumpfile的值
+	sed -i "/^dumpfile=/c dumpfile=meta.${1}.${2}.dmp" $5
+   # 如果用户名存在映射
+	if [ "$1" != "$3" ]; then
+		sed -i '$a\remap_schema='${1}':'${3}'' $5
+	fi
+   # 如果表名存在映射
+	if [ "$2" != "$4" ]; then
+		sed -i '$a\remap_table='${2}':'${4}'' $5
+	fi
+
+   cp $8 $7
+	# 替换expdp scritpfile中的parfile项的值
+	sed -i "/parfile=.*$/c parfile=${5}" ${7}
+}
+
+#-----------------------------------------------------
+# $1: fromhostip
+# $2: tohostip
+# $3: fromfile
+# $4: todir
+# $5: tohostaccount
+# $6: tohostaccountpass
+# $7: ssh port
+# $8: local ip
+
+function copyFileToRemote(){
+   fip=$1
+   toip=$2
+   ffile=${3/,/ }
+   todir=$4
+   tuser=$5
+   tpass=$6
+   sshport=$7
+   localip=$8
+   # 如果源文件在本地机器上
+   if [ "$localip" == "$fip" ]; then
+      # 源机器与目标机器是同一台机器
+      if [ "$fip" == "$toip" ]; then
+         # 本地执行拷贝即可
+         cp $ffile $todir
+      else
+         # 从本地机器向目标端机器scp
+         sshpass -p $tpass scp -P $sshport $ffile ${tuser}@${toip}:${tdir}
+      fi
+   fi
+   # 如果源文件不在本地机器上 注意多个文件需要特殊处理
+   if [ "$localip" != "$fip" ]; then
+      # 拉取文件到本地
+      sshpass -p $tpass scp -P $sshport ${tuser}@${toip}:$ffile ${todir}
+      if [ "$fip" != "$toip" ]; then
+         # 拷贝到源端机器
+         sshpass -p $tpass scp -P $sshport $ffile ${tuser}@${toip}:${tdir}
+      fi
+   fi
 }

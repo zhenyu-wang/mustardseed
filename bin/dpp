@@ -57,12 +57,11 @@ function prerequisiteCheck {
 
 function usage {
 	echo -e "Usage: $0 [--confile={config file}] \n \
-[--reqfile={reqfile name} --content=meta|data] \n \
-[--tables=fromuser.oldtable[:touser[.newtable]]] \n \
+[--reqfile={reqfile name} --content=meta|data [--withscn]] \n \
+[--tables=fromuser.oldtable[:touser[.newtable]] [--content=meta|data] [--withscn]] \n \
 [--tabwhere=fromuser.oldtable:query_condition] \n \
 [--check=all|configfile|tables] \n \
 [--status=all|fromuser.tablename] \n \
-[--withscn] \n \
 [-h|-help|--help]"
    echo -e "\n \
    功能说明：\n \
@@ -168,6 +167,8 @@ do
          # 指定--reqfile时必须同时指定--content
          if [ -n "$_REQFILE" ] && [ -z "$_DPP_CONTENT" ]; then log "指定--reqfile时必须同时指定--content"; usage; exit; fi;
 
+         # 指定--tables时必须同时指定--content
+         if [ -n "$TABLES" ] && [ -z "$_DPP_CONTENT" ]; then log "指定--tables参数的同时需要指定--content"; usage; exit; fi;
          # --status只能单独指定，不能与其它参数同时使用
          if [ -n "$_TO_GETSTATUS" -a $_COU_ARGS -ge 3 ]; then log "--status 只能单独指定，不能与其它参数同时使用"; usage; exit; fi;
 
@@ -207,7 +208,7 @@ if [ "$TABLES"x != "x" ]; then
    echo "touser:  $TOUSER"
    FROMTAB=$(echo $TABLES | awk -F ':' '{print $1}' | awk -F '.' '{print $2}')
    echo "fromtab: $FROMTAB"
-   # totab如果取到的值为空，那么设置为与frotab相同
+   # totab如果取到的值为空，那么设置为与fromtab相同
    TOTAB=$(echo $TABLES | awk -F ':' '{print $2}' | awk -F '.' '{print $2}')
    TOTAB=${TOTAB:-$FROMTAB}
    echo "totab: $TOTAB"
@@ -223,21 +224,56 @@ if [ "$TABLES"x != "x" ]; then
    log "检查表在源端数据库（SDB）是否存在"
    isTableExist "${FROMUSER}.${FROMTAB}"
 
-   # 检查表在目标端数据库（TDB）是否存在，存在则执行truncate table，不存在则提示检查目标用户名和表名是否正确。
-   log "检查表在目标端数据库（TDB）是否存在"
-   isTableExist "${TOUSER}.${TOTAB}"
+   if [ "$_DPP_CONTENT" == "meta" ]; then
 
-   log "目标端数据库TDB truncate table ${TOUSER}.${TOTAB}"
-   truncateTable "${TOUSER}.${TOTAB}" "$_TDB_CONN_STR"
+      log "创建源端OS上的directory"
+      sshpass -p ${sdb_oracle_pass} ssh -p ${sdb_ssh_port} ${sdb_ip} mkdir -p ${sdb_dir}
 
-   log "创建pipe file"
-   makePipe "${FROMUSER}.${FROMTAB}" "$DPPDIR/pipe"
+      log "创建目标端端OS上的directory"
+      sshpass -p ${tdb_oracle_pass} ssh -p ${tdb_ssh_port} ${tdb_ip} mkdir -p ${tdb_dir}
 
-   log "执行导入"
-   ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$DPPDIR" "$_TDB_CONN_STR"
+      log "创建SDB的directory"
+      createDBDirectory "$sdb_dir_name" "$sdb_dir" "$_SDB_CONN_STR"
 
-   log "执行导出"
-   expDataByTable ${FROMUSER} ${FROMTAB} "$(if $WITHSCN; then echo yes;else echo no;fi;)" "$DPPDIR" "$_TDB_CONN_STR"
+      log "创建TDB的directory"
+      createDBDirectory "$tdb_dir_name" "$tdb_dir" "$_TDB_CONN_STR"
+
+      log "生成导出meta结构的parfile文件, expdp脚本文件"
+      genExpMetaParFileByTable "${FROMUSER}.${FROMTAB}" "$DPPDIR/conf/exp.meta.${FROMUSER}.${FROMTAB}.par" "$DPPDIR/conf/exp.meta.par" "$DPPDIR/script/exp.meta.${FROMUSER}.${FROMTAB}.sh" "$DPPDIR/conf/exp.meta.sh"
+
+      log "生成导入meta结构的parfile文件，impdp脚本文件"
+      genImpMetaParFileByTable "${FROMUSER}" "$FROMTAB" "$TOUSER" "$TOTAB" "$DPPDIR/conf/imp_meta.${FROMUSER}.${FROMTAB}.par" "$DPPDIR/conf/imp.meta.par" "$DPPDIR/script/imp.meta.${FROMUSER}.${FROMTAB}.sh" "$DPPDIR/conf/imp.meta.sh"
+
+      log "同步OCM上生成的导出脚本、parfile到SDB"
+      copyFileToRemote "$_OCM_IP" "$sdb_ip" "$DPPDIR/conf/exp.meta.${FROMUSER}.${FROMTAB}.par,$DPPDIR/script/exp.meta.${FROMUSER}.${FROMTAB}.sh" "${sdb_dir}" "oracle" "$sdb_oracle_pass" "$_OCM_IP"
+
+      log "同步OCM上生成的导入脚本、parfile到TDB"
+      copyFileToRemote "$_OCM_IP" "$tdb_ip" "$DPPDIR/conf/imp.meta.${FROMUSER}.${FROMTAB}.par,$DPPDIR/script/imp.meta.${FROMUSER}.${FROMTAB}.sh" "${sdb_dir}" "oracle" "$sdb_oracle_pass" "$_OCM_IP
+
+      log "SDB上执行导出结构"
+
+      log "同步SDB上的dmp文件到TDB"
+      
+      log "TDB上执行导入结构"
+   fi
+   
+   if [ "$_DPP_CONTENT" == "data" ]; then
+      # 检查表在目标端数据库（TDB）是否存在，存在则执行truncate table，不存在则提示检查目标用户名和表名是否正确。
+      log "检查表在目标端数据库（TDB）是否存在"
+      isTableExist "${TOUSER}.${TOTAB}"
+
+      log "目标端数据库TDB truncate table ${TOUSER}.${TOTAB}"
+      truncateTable "${TOUSER}.${TOTAB}" "$_TDB_CONN_STR"
+
+      log "创建pipe file"
+      makePipe "${FROMUSER}.${FROMTAB}" "$DPPDIR/pipe"
+
+      log "执行导入"
+      ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$DPPDIR" "$_TDB_CONN_STR"
+
+      log "执行导出"
+      expDataByTable ${FROMUSER} ${FROMTAB} "$(if $WITHSCN; then echo yes;else echo no;fi;)" "$DPPDIR" "$_SDB_CONN_STR"
+   fi
 fi
 
 ################################################
@@ -292,7 +328,6 @@ if [ -n "$_REQFILE" ]; then
          # 执行备份结构,结构保存到了SDB服务器上,同时也是OCM上
          log "SDB上执行导出"
          expdp \'/ as sysdba\' parfile=${sdb_dir}/exp_meta.par 
-         # expdp $_SDB_LOCAL_CONN_STR parfile=${sdb_dir}/exp_meta.par 
 
 			# 如果OCM与TDB是同一台机器,说明SDB、TDB、OCM都在一台机器上(未测试)
          # 不需要ssh操作
