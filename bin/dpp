@@ -1,11 +1,11 @@
 #! /usr/bin/bash
 
-##########################################################
+#---------------------------------------------------------
 # 功能描述：
 # 	此脚本根据传递的表执行导出和导入
 #	适用于单独对几个表进行导出导入，基于表结构已经同步完成
 # 2018-12-06 zhenyu-wang created
-##########################################################
+#---------------------------------------------------------
 
 _CUR_USER=`whoami`
 # 数据库软件的OS用户
@@ -59,6 +59,7 @@ function usage {
 	echo -e "Usage: $0 [--confile={config file}] \n \
 [--reqfile={reqfile name} --content=meta|data [--withscn]] \n \
 [--tables=fromuser.oldtable[:touser[.newtable]] [--content=meta|data] [--withscn]] \n \
+[--remaptbs=tbs1:tbs2,tbs3:tbs4]
 [--tabwhere=fromuser.oldtable:query_condition] \n \
 [--check=all|configfile|tables] \n \
 [--status=all|fromuser.tablename] \n \
@@ -156,9 +157,8 @@ do
 			WITHSCN=true
 		   shift;;
 		--) 
-         # 在这里判断参数组合的逻辑是否符合要求,因为到了 --，已经是最后一个参数
-
-         # 如果到了最后一个参数--了，参数的个数为1，说明没有指定任何参数，则显示帮助信息
+         # 这里判断参数组合逻辑,到了 -- 已经是最后一个参数
+         # 参数个数为1，说明没有指定任何参数，则显示帮助信息
          if [ $_COU_ARGS -eq 1 ]; then log "请指定参数！"; usage; exit; fi;
 
          # --tables与--reqfile不能同时指定
@@ -199,7 +199,7 @@ _OCM_IP=`hostname -i|cut -d' ' -f 2`
 
 # 如果以表的方式执行导出导入
 if [ "$TABLES"x != "x" ]; then
-   # 取第一个.之前的内容，即为fromuser，%%从后开始匹配 .* ，并从删除最长的匹配，保证只剩下fromuser
+   # 取第一个.之前的内容，即为fromuser，%%从后开始匹配 .* 并删除最长的匹配，保证只剩下fromuser
    FROMUSER=${TABLES%%.*}
    echo "fromuser: $FROMUSER"
    # touser如果取到的值为空，那么设置为与fromuser相同
@@ -213,48 +213,46 @@ if [ "$TABLES"x != "x" ]; then
    TOTAB=${TOTAB:-$FROMTAB}
    echo "totab: $TOTAB"
 
-   # 检查源端数据库（SDB）、目标端数据库（TDB）的可连接性
    log "检查源端数据库（SDB）的可连接性"
    checkDBConnection "$_SDB_CONN_STR"
 
    log "检查目标端数据库（TDB）的可连接性"
    checkDBConnection "$_TDB_CONN_STR"
 
-   # 检查表在源端数据库（SDB）是否存在,防止表名写错
    log "检查表在源端数据库（SDB）是否存在"
    isTableExist "${FROMUSER}.${FROMTAB}"
 
    if [ "$_DPP_CONTENT" == "meta" ]; then
 
-      log "创建源端OS上的directory"
-      sshpass -p ${sdb_oracle_pass} ssh -p ${sdb_ssh_port} ${sdb_ip} mkdir -p ${sdb_dir}
-
-      log "创建目标端端OS上的directory"
-      sshpass -p ${tdb_oracle_pass} ssh -p ${tdb_ssh_port} ${tdb_ip} mkdir -p ${tdb_dir}
-
-      log "创建SDB的directory"
-      createDBDirectory "$sdb_dir_name" "$sdb_dir" "$_SDB_CONN_STR"
-
-      log "创建TDB的directory"
-      createDBDirectory "$tdb_dir_name" "$tdb_dir" "$_TDB_CONN_STR"
-
-      log "生成导出meta结构的parfile文件, expdp脚本文件"
-      genExpMetaParFileByTable "${FROMUSER}.${FROMTAB}" "$DPPDIR/conf/exp.meta.${FROMUSER}.${FROMTAB}.par" "$DPPDIR/conf/exp.meta.par" "$DPPDIR/script/exp.meta.${FROMUSER}.${FROMTAB}.sh" "$DPPDIR/conf/exp.meta.sh"
-
-      log "生成导入meta结构的parfile文件，impdp脚本文件"
-      genImpMetaParFileByTable "${FROMUSER}" "$FROMTAB" "$TOUSER" "$TOTAB" "$DPPDIR/conf/imp_meta.${FROMUSER}.${FROMTAB}.par" "$DPPDIR/conf/imp.meta.par" "$DPPDIR/script/imp.meta.${FROMUSER}.${FROMTAB}.sh" "$DPPDIR/conf/imp.meta.sh"
-
-      log "同步OCM上生成的导出脚本、parfile到SDB"
-      copyFileToRemote "$_OCM_IP" "$sdb_ip" "$DPPDIR/conf/exp.meta.${FROMUSER}.${FROMTAB}.par,$DPPDIR/script/exp.meta.${FROMUSER}.${FROMTAB}.sh" "${sdb_dir}" "oracle" "$sdb_oracle_pass" "$_OCM_IP"
-
-      log "同步OCM上生成的导入脚本、parfile到TDB"
-      copyFileToRemote "$_OCM_IP" "$tdb_ip" "$DPPDIR/conf/imp.meta.${FROMUSER}.${FROMTAB}.par,$DPPDIR/script/imp.meta.${FROMUSER}.${FROMTAB}.sh" "${sdb_dir}" "oracle" "$sdb_oracle_pass" "$_OCM_IP
-
-      log "SDB上执行导出结构"
-
-      log "同步SDB上的dmp文件到TDB"
-      
-      log "TDB上执行导入结构"
+#      log "创建源端OS上的directory"
+#      sshpass -p ${sdb_oracle_pass} ssh -p ${sdb_ssh_port} ${sdb_ip} mkdir -p ${sdb_dir}
+#
+#      log "创建目标端端OS上的directory"
+#      sshpass -p ${tdb_oracle_pass} ssh -p ${tdb_ssh_port} ${tdb_ip} mkdir -p ${tdb_dir}
+#
+#      log "创建SDB的directory"
+#      createDBDirectory "$sdb_dir_name" "$sdb_dir" "$_SDB_CONN_STR"
+#
+#      log "创建TDB的directory"
+#      createDBDirectory "$tdb_dir_name" "$tdb_dir" "$_TDB_CONN_STR"
+#
+#      log "生成导出meta结构的parfile文件, expdp脚本文件"
+#      genExpMetaParFileByTable "${FROMUSER}.${FROMTAB}" "$DPPDIR/conf/exp.meta.${FROMUSER}.${FROMTAB}.par" "$DPPDIR/conf/exp.meta.par" "$DPPDIR/script/exp.meta.${FROMUSER}.${FROMTAB}.sh" "$DPPDIR/conf/exp.meta.sh"
+#
+#      log "生成导入meta结构的parfile文件，impdp脚本文件"
+#      genImpMetaParFileByTable "${FROMUSER}" "$FROMTAB" "$TOUSER" "$TOTAB" "$DPPDIR/conf/imp_meta.${FROMUSER}.${FROMTAB}.par" "$DPPDIR/conf/imp.meta.par" "$DPPDIR/script/imp.meta.${FROMUSER}.${FROMTAB}.sh" "$DPPDIR/conf/imp.meta.sh"
+#
+#      log "同步OCM上生成的导出脚本、parfile到SDB"
+#      copyFileToRemote "$_OCM_IP" "$sdb_ip" "$DPPDIR/conf/exp.meta.${FROMUSER}.${FROMTAB}.par,$DPPDIR/script/exp.meta.${FROMUSER}.${FROMTAB}.sh" "${sdb_dir}" "oracle" "$sdb_oracle_pass" "$_OCM_IP"
+#
+#      log "同步OCM上生成的导入脚本、parfile到TDB"
+#      copyFileToRemote "$_OCM_IP" "$tdb_ip" "$DPPDIR/conf/imp.meta.${FROMUSER}.${FROMTAB}.par,$DPPDIR/script/imp.meta.${FROMUSER}.${FROMTAB}.sh" "${sdb_dir}" "oracle" "$sdb_oracle_pass" "$_OCM_IP
+#
+#      log "SDB上执行导出结构"
+#
+#      log "同步SDB上的dmp文件到TDB"
+#      
+#      log "TDB上执行导入结构"
    fi
    
    if [ "$_DPP_CONTENT" == "data" ]; then
