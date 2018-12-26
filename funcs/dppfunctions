@@ -27,46 +27,28 @@ function handleFormat {
 	sed -i 's/[a-z]/\u&/g' $1
 }
 
-# 判断要导的表在sourceDB是否都存在
-# $1: 表名 或 需求文件名
-# $2: 数据库连接串,默认值："/ as sysdba"
+#----------------------------------------
+# 功能：判断要导的表在sourceDB是否都存在
+# 返回：存在：yes 不存在：no
+# $1: db connection string
+# $2: username
+# $3: table name
+#----------------------------------------
 
 function isTableExist {
-_conn_str=${2:-"/ as sysdba"}
-# 默认表都存在，否则则返回 0，终止程序执行
-cou_noext_tab=0
-# 如果参数是一个文件，则使用文件中的内容进行判断
-if [ -f $1 ]; then
-while read USERNAME TABLENAME TOUSER TOTAB
-do
+_conn_str=${1}
+USERNAME=${2}
+TABLENAME=${3}
+
 IFEXIST=`sqlplus -S "${_conn_str}" << EOF
 set heading off feedback off pagesize 0 verify off echo off
-select count(*) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
-exit;
-EOF`
-if [ $IFEXIST == "0" ]; then
-	((cou_noext_tab++));
-	echo "表: ${USERNAME}.${TABLENAME} 在数据库中不存在。"
-fi
-done < $1
-# 如果参数是一个表名，则根据表名进行判断
-# 参数的格式为USER.TAB
-else
-USERNAME=${1%.*}
-TABLENAME=${1#*.}
-IFEXIST=`sqlplus -S "${_conn_str}" << EOF
-set heading off feedback off pagesize 0 verify off echo off
-select count(*) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
+select count(table_name) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
 exit;
 EOF`
 if [ "$IFEXIST" == "0" ]; then
-	((cou_noext_tab++));
-	echo "表: ${USERNAME}.${TABLENAME} 在数据库中不存在。"
-fi
-fi
-# 如果发现了不存在的表，退出终止程序执行
-if [ $cou_noext_tab -gt 0 ]; then
-	exit $cou_noext_tab
+	echo "no"
+else
+   echo "yes"
 fi
 }
 
@@ -84,11 +66,11 @@ function setRemapUsers {
 
 # truncate DB's tables
 # 参数：
-#	$1 username.tablename
-#	$2 database connection string
+#	$1 database connection string
+#	$2 username.tablename
 function truncateTable {
-(sqlplus -S "$2" << EOF
-truncate table $1;
+(sqlplus -S "$1" << EOF
+truncate table $2;
 exit;
 EOF
 ) | grep -i "Table truncated" > /dev/null 2>&1
@@ -98,17 +80,38 @@ if [ $? -ne 0 ]; then
 fi
 }
 
-# 检查数据库是否可以连接成功
-# 以数据库连接串作为参数
+# drop DB's tables
+# 参数：
+#	$1 database connection string
+#	$2 username.tablename
+function dropTable {
+(sqlplus -S "$1" << EOF
+drop table $2 purge;
+exit;
+EOF
+) | grep -i "Table dropped" > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+	echo "failed"
+else
+   echo "successed"
+fi
+}
+
+#----------------------------
+# 功能：检查数据库是否可以连接成功
+# 返回：成功返回yes，不成功返回no
+# $1: db connection string
+#----------------------------
 function checkDBConnection {
 (sqlplus -S "$1" << EOF
 select status from v\$instance;
 exit;
 EOF
 ) | grep OPEN > /dev/null 2>&1
-if [ $? -ne 0 ]; then
-	echo "${1} 数据库无法连接"
-	exit
+if [ $? -eq 0 ]; then
+	echo "yes"
+else
+   echo "no"
 fi
 }
 
@@ -411,7 +414,7 @@ function copyFileToRemote(){
 
 #--------------------------------------------------------
 # 功能：根据表名从DB中统计表的大小
-# 返回值：表大小 MB
+# 返回：表大小 MB
 # $1: connection string
 # $2: user
 # $3: table
@@ -419,7 +422,7 @@ function copyFileToRemote(){
 
 #--------------------------------------------------------
 # 功能：根据表空间名,从DB中统计表空间剩余的大小
-# 返回值：大小 MB
+# 返回：大小 MB
 # $1: connection string
 # $2: tbs类型
 # $3: tablespace name
@@ -427,7 +430,7 @@ function copyFileToRemote(){
 
 #--------------------------------------------------------
 # 功能：从DB中查询某一类型的对象是否存在
-# 返回值：存在：yes 不存在：no
+# 返回：存在：yes 不存在：no
 # $1: connection string
 # $2: 对象类型
 # $3: 对象名称
@@ -440,7 +443,40 @@ function copyFileToRemote(){
 # $3: table
 # $4: 生成的sql文件名称
 #--------------------------------------------------------
-
+function genSQLCreateTable() {
+_conn_str=$1
+USERNAME=$2
+TABLENAME=$3
+_sqlfile=$4
+sqlplus -S "${_conn_str}" << EOF
+set echo off
+set pagesize 0
+set long 90000
+set feedback off
+set termout off
+set echo off
+set heading off
+set verify off
+--输出信息采用缩排或换行格式化
+EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'PRETTY', TRUE);
+--确保每个语句都带分号
+EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'SQLTERMINATOR', TRUE);
+--关闭表索引、外键等关联（后面单独生成）
+EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'CONSTRAINTS', FALSE);
+EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'REF_CONSTRAINTS', FALSE);
+EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'CONSTRAINTS_AS_ALTER', FALSE);
+--关闭存储、表空间属性
+--EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'STORAGE', FALSE);
+--EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'TABLESPACE', FALSE);
+--关闭创建表的PCTFREE、NOCOMPRESS等属性
+EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'SEGMENT_ATTRIBUTES', FALSE);
+spool $_sqlfile
+--导出表结构
+select dbms_metadata.get_ddl('TABLE', '$USERNAME', '$TABLENAME') from dual;
+spool off;
+exit;
+EOF
+}
 #--------------------------------------------------------
 # 功能：根据已知表，从DB中获取创建索引的sql
 # $1: connection string
@@ -460,7 +496,19 @@ function copyFileToRemote(){
 #--------------------------------------------------------
 # 功能：根据username,tablename,tablespace name的映射关系, 对建表和建索引语句进行替换
 # $1: sql file name
-# $2: 替换类型：user/tablename/tbsname
+# $2: 替换类型：username/tablename/tbsname
 # $3: 原值
 # $4: 新值
 #--------------------------------------------------------
+function filterEditSQLScript(){
+   echo "nana"
+}
+
+#--------------------------------------------------------
+# 功能：在DB中执行sql脚本
+# $1: connection string
+# $2: sql文件名称
+#--------------------------------------------------------
+function executeSQLScript() {
+
+}

@@ -91,6 +91,9 @@ WITHSCN=false
 _REQFILE=""
 # 导出内容默认不指定
 _DPP_CONTENT=""
+# 设置remap_tablespace初始值为空
+typeset -u _REMAP_TBS
+_REMAP_TBS=""
 # 参数的总数量,初始为0个参数
 _COU_ARGS=0
 
@@ -99,7 +102,7 @@ _TO_CHECK=""
 
 # set之后的--代表set的内容中如果存在- ,不将其作为参数
 # "$@"之前的--是为了最后参数的处理结束判断
-TMPARGS=$(getopt -o "h" -al "status:,help,confile:,tables:,check:,content:,withscn,reqfile:" -- "$@")
+TMPARGS=$(getopt -o "h" -al "status:,help,confile:,tables:,check:,content:,withscn,reqfile:,remaptbs:" -- "$@")
 
 eval set -- $TMPARGS
 
@@ -147,6 +150,9 @@ do
             usage
             exit
          fi
+		   shift 2;;
+		-remaptbs | --remaptbs )
+			_REMAP_TBS=$2
 		   shift 2;;
 		-confile | --confile )
 			is_file $2
@@ -199,6 +205,7 @@ _OCM_IP=`hostname -i|cut -d' ' -f 2`
 
 # 如果以表的方式执行导出导入
 if [ "$TABLES"x != "x" ]; then
+   log "开始参数值解析"
    # 取第一个.之前的内容，即为fromuser，%%从后开始匹配 .* 并删除最长的匹配，保证只剩下fromuser
    FROMUSER=${TABLES%%.*}
    echo "fromuser: $FROMUSER"
@@ -213,54 +220,97 @@ if [ "$TABLES"x != "x" ]; then
    TOTAB=${TOTAB:-$FROMTAB}
    echo "totab: $TOTAB"
 
-   log "检查源端数据库（SDB）的可连接性"
-   checkDBConnection "$_SDB_CONN_STR"
+   log "检查源端数据库:${tnsname_sdb}的可连接性"
+   if [ `checkDBConnection "$_SDB_CONN_STR"` == "no" ]; then
+      echo "源端数据库:${tnsname_sdb}无法连接"
+      exit
+   else
+      echo "成功"
+   fi
 
-   log "检查目标端数据库（TDB）的可连接性"
-   checkDBConnection "$_TDB_CONN_STR"
+   log "检查目标端数据库:${tnsname_tdb}的可连接性"
+   if [ `checkDBConnection "$_TDB_CONN_STR"` == "no" ]; then
+      echo "目标端数据库:${tnsname_tdb}无法连接"
+      exit
+   else
+      echo "成功"
+   fi
 
-   log "检查表在源端数据库（SDB）是否存在"
-   isTableExist "${FROMUSER}.${FROMTAB}"
+   log "检查表:${FROMUSER}.${FROMTAB}在源端数据库:${tnsname_sdb}是否存在"
+   if [ $(isTableExist "$_SDB_CONN_STR" "${FROMUSER}" "${FROMTAB}") == "no" ]; then
+      echo "表:${FROMUSER}.${FROMTAB}在源端数据库:${tnsname_sdb}不存在"
+      exit
+   else
+      echo "成功"
+   fi
 
    if [ "$_DPP_CONTENT" == "meta" ]; then
+      # 默认不需要用户名转换 
+      is_need_remap_user="no"
+      # 默认不需要表空间转换 
+      is_need_remap_tbs="no"
 
-#      log "创建源端OS上的directory"
-#      sshpass -p ${sdb_oracle_pass} ssh -p ${sdb_ssh_port} ${sdb_ip} mkdir -p ${sdb_dir}
-#
-#      log "创建目标端端OS上的directory"
-#      sshpass -p ${tdb_oracle_pass} ssh -p ${tdb_ssh_port} ${tdb_ip} mkdir -p ${tdb_dir}
-#
-#      log "创建SDB的directory"
-#      createDBDirectory "$sdb_dir_name" "$sdb_dir" "$_SDB_CONN_STR"
-#
-#      log "创建TDB的directory"
-#      createDBDirectory "$tdb_dir_name" "$tdb_dir" "$_TDB_CONN_STR"
-#
-#      log "生成导出meta结构的parfile文件, expdp脚本文件"
-#      genExpMetaParFileByTable "${FROMUSER}.${FROMTAB}" "$DPPDIR/conf/exp.meta.${FROMUSER}.${FROMTAB}.par" "$DPPDIR/conf/exp.meta.par" "$DPPDIR/script/exp.meta.${FROMUSER}.${FROMTAB}.sh" "$DPPDIR/conf/exp.meta.sh"
-#
-#      log "生成导入meta结构的parfile文件，impdp脚本文件"
-#      genImpMetaParFileByTable "${FROMUSER}" "$FROMTAB" "$TOUSER" "$TOTAB" "$DPPDIR/conf/imp_meta.${FROMUSER}.${FROMTAB}.par" "$DPPDIR/conf/imp.meta.par" "$DPPDIR/script/imp.meta.${FROMUSER}.${FROMTAB}.sh" "$DPPDIR/conf/imp.meta.sh"
-#
-#      log "同步OCM上生成的导出脚本、parfile到SDB"
-#      copyFileToRemote "$_OCM_IP" "$sdb_ip" "$DPPDIR/conf/exp.meta.${FROMUSER}.${FROMTAB}.par,$DPPDIR/script/exp.meta.${FROMUSER}.${FROMTAB}.sh" "${sdb_dir}" "oracle" "$sdb_oracle_pass" "$_OCM_IP"
-#
-#      log "同步OCM上生成的导入脚本、parfile到TDB"
-#      copyFileToRemote "$_OCM_IP" "$tdb_ip" "$DPPDIR/conf/imp.meta.${FROMUSER}.${FROMTAB}.par,$DPPDIR/script/imp.meta.${FROMUSER}.${FROMTAB}.sh" "${sdb_dir}" "oracle" "$sdb_oracle_pass" "$_OCM_IP
-#
-#      log "SDB上执行导出结构"
-#
-#      log "同步SDB上的dmp文件到TDB"
-#      
-#      log "TDB上执行导入结构"
+      # 如果用户名存在映射，校验user是否在TDB存在
+      if [ "${FROMUSER}" != "${TOUSER}" ]; then
+         is_need_remap_user="yes"
+         if [ $(isObjectExist "$_TDB_CONN_STR" "USER" "${TOUSER}") == "no" ]; then
+            echo "USER: ${TOUSER}在${tnsname_tdb}中不存在"
+            exit
+         fi
+      fi
+
+      # 如果表空间名存在映射，校验tablespace是否在TDB存在
+      if [ -n "${_REMAP_TBS}" ]; then
+         is_need_remap_tbs="yes"
+         # 循环判断
+         for i in $(echo $_REMAP_TBS | tr ',' ' '); do
+            TOTBS=$(echo $i | cut -d':' -f 2)
+            if [ $(isObjectExist "$_TDB_CONN_STR" "TABLESPACE" "${TOTBS}")  == "no" ]; then
+               echo "TABLESPACE: ${TOTBS}在${tnsname_tdb}中不存在"
+               exit
+            fi
+         done
+      fi
+
+      # 生成原始建表SQL
+      genSQLCreateTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+
+      # 如果存在用户映射关系
+      if [ "$is_need_remap_user" == "yes" ]; then
+         filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "username" "${FROMUSER}" "${TOUSER}" 
+      fi
+
+      # 如果存在表空间映射关系
+      if [ "$is_need_remap_tbs" == "yes" ]; then
+         for i in $(echo $_REMAP_TBS | tr ',' ' '); do
+            FROMTBS=$(echo $i | cut -d':' -f 1)
+            TOTBS=$(echo $i | cut -d':' -f 2)
+            filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOUTBS}" 
+         done
+      fi
+
+      log "检查表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}是否已经存在"
+      if [ $(isTableExist "$_TDB_CONN_STR" "${TOUSER}" "${TOTAB}") == "yes" ]; then
+         echo "表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}是否已经存在"
+         echo "此过程会删除除表:${TOUSER}.${TOTAB}中所有数据"
+         dropTable "$_TDB_CONN_STR" "${TOUSER}.${TOTAB}"
+      fi
+
+      log "在数据库：${tnsname_tdb}中创建表：${TOUSER}.${TOTAB}"
+      executeSQLScript "$_TDB_CONN_STR" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
    fi
    
    if [ "$_DPP_CONTENT" == "data" ]; then
-      # 检查表在目标端数据库（TDB）是否存在，存在则执行truncate table，不存在则提示检查目标用户名和表名是否正确。
-      log "检查表在目标端数据库（TDB）是否存在"
-      isTableExist "${TOUSER}.${TOTAB}"
 
-      log "目标端数据库TDB truncate table ${TOUSER}.${TOTAB}"
+      log "检查表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}是否存在"
+      if [ $(isTableExist "$_TDB_CONN_STR" "${TOUSER}" "${TOTAB}") == "no" ]; then
+         echo "表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}不存在"
+         exit
+      else
+         echo "成功"
+      fi
+
+      log "在目标端数据库：${tnsname_tdb}上执行： truncate table ${TOUSER}.${TOTAB}"
       truncateTable "${TOUSER}.${TOTAB}" "$_TDB_CONN_STR"
 
       log "创建pipe file"
