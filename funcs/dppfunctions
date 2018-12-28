@@ -211,7 +211,6 @@ function expDataByTable(){
    if [ "$3" == "yes" ]; then
       scn_no=`getCurrentScn "$5"`
 	   scn_para="FLASHBACK_SCN=${scn_no}" 
-      echo "数据库SCN号为 : ${scn_no}"
    fi
 	rm -rf ${4}/log/exp.${username}.${tablename}.log
 	eval "nohup exp ${5} rows=y ${scn_para} CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${4}/log/exp.${username}.${tablename}.log file=${4}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &"
