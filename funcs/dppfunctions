@@ -5,7 +5,7 @@
 
 function is_file {
 	if [ ! -f "$1" ] ; then
-		echo "文件:$1 不存在或文件路径及名称错误"
+		echo "文件:$1 不存在或文件名错误"
 		exit 2
 	fi
 }
@@ -45,7 +45,7 @@ set heading off feedback off pagesize 0 verify off echo off
 select count(table_name) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
 exit;
 EOF`
-if [ "$IFEXIST" == "0" ]; then
+if [ $IFEXIST -eq 0 ]; then
 	echo "no"
 else
    echo "yes"
@@ -74,9 +74,10 @@ truncate table $2;
 exit;
 EOF
 ) | grep -i "Table truncated" > /dev/null 2>&1
-if [ $? -ne 0 ]; then
-	echo "truncate $1 失败！"
-	exit
+if [ $? -eq 0 ]; then
+	echo "yes"
+else
+   echo "no"
 fi
 }
 
@@ -93,7 +94,7 @@ EOF
 if [ $? -ne 0 ]; then
 	echo "failed"
 else
-   echo "successed"
+   echo "succeeded"
 fi
 }
 
@@ -130,71 +131,24 @@ exit;
 EOF
 }
 
-# Description: generate parfile for expdp matedata_only
-# when source database is oracle11g or there is only one user.
-# 只有dpp.conf文件中remap_users有值的情况下，才会增加remap_schemas参数
+# Description: mknod pipe file for tables on OCM
 # parameters: 
-# $1: table list file, 
-# $2: parfile name
-
-function genExpMetaParFile(){
-	# Join username and tablename with comma, from cols in one line
-	tables=`awk '{print $1 "." $2}' "$1" | tr -t "\n" "," | sed -e 's/,$/\n/'`
-	# 替换parfile中的tables项的值
-	sed -i "/^tables=/c tables=${tables}" $2
-}
-
-
-# Description: generate parfile for impdp matedata_only
-# $1: meta parfile
-# $2: remap_users
-# $3: remap_tabspace
-function genImpMetaParFile(){
-   imp_meta_parfile=$1
-   remap_users=${2:-null}
-   remap_tabs=${3:-null}
-	# 先删除import meta parfile中remap_schemas,remap_tablespace项
-	sed -i "/remap_schema=/d" $imp_meta_parfile
-	sed -i "/remap_tablespace=/d" $imp_meta_parfile
-	# 如果取出的remap_schemas不等于空，才进行替换,此值在dpp.conf中已经自动生成
-	# 当不需要schema转换的时候，oracle11g中remap_schemas参数会导致错误，所以默认parfile中没有此项
-	if [ "$remap_users" != "null" ]; then
-		sed -i '$a\remap_schema='${remap_users}'' $imp_meta_parfile
-	fi
-	if [ "$remap_tabs" != "null" ]; then
-   	sed -i '$a\remap_tablespace='${remap_tbs}'' $imp_meta_parfile
-   fi
-}
-
-
-# Description: mknod for tables on OCM/source database
-# parameters: 
-# $1: 需求文件或用户.表名
+# $1: pipe file name
 # $2: 创建pipe文件的路径
 function makePipe(){
-   # 如果参数是文件，是批量创建的方式
-	if [ -f "$1" ]; then
-      tables=`awk '{print $1 "." $2}' $1 | tr -t "\n" " " | sed -e 's/ $/\n/'`
-      for pipe_name in ${tables}; do
-         rm -rf ${2}/${pipe_name}
-         mknod ${2}/${pipe_name} p
-      done
-   else
-      # 根据传如的user.table创建pipe node
-      rm -rf ${2}/$1
-      mknod ${2}/$1 p
-   fi
+   rm -rf ${2}/$1
+   mknod ${2}/$1 p
 }
 
-################################################
+#-----------------------------------------------
 # 功能：根据表名导入表数据,暂不支持表名的映射
-# 参数1: 用户名
-# 参数2: 表名
-# 参数3: 映射用户名
-# 参数4: 映射表名
-# 参数5: 工作路径
-# 参数6: 数据库连接串
-################################################
+# $1: 用户名
+# $2: 表名
+# $3: 映射用户名
+# $4: 映射表名
+# $5: 工作路径
+# $6: 数据库连接串
+#-----------------------------------------------
 function ImpDataByTable(){
 	username=$1
 	tablename=$2
@@ -204,7 +158,6 @@ function ImpDataByTable(){
    # 生成并执行入脚本
 	eval "nohup imp ${6} commit=y ignore=y file=${5}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${5}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &"
 }
-
 
 # 功能：生成导入脚本文件
 # $1: 输出要产生的脚本文件名
@@ -226,12 +179,13 @@ function genImpScript(){
 	chmod +x $impshfile
 }
 
-################################################
-# 获取数据scn号，并返回
-# 参数1：数据库连接串,若未指定参数，默认为"/ as sysdba"
-################################################
+#------------------------------------------------------
+# 功能：获取数据scn号，并返回
+# 返回：scn号
+# $1：数据库连接串
+#------------------------------------------------------
 function getCurrentScn(){
-CONNSTR=${1:-"/ as sysdba"}
+CONNSTR=${1}
 CURRENT_SCN=`sqlplus -S "$CONNSTR" << EOF
 set heading off feedback off pagesize 0 verify off echo off
 select to_char(current_scn,'999999999999999999') from v\\$database;
@@ -240,14 +194,14 @@ EOF`
 echo $(($CURRENT_SCN))
 }
 
-################################################
-# description: 根据单表名执行导出
-# 参数1: 用户名
-# 参数2: 表名
-# 参数3: 是否根据当前scn导出,yes / no
-# 参数4: 工作目录
-# 参数5: 数据库连接串
-#################################################
+#-----------------------------------------------
+# 功能: 根据单表名执行导出
+# $1: 用户名
+# $2: 表名
+# $3: 是否根据当前scn导出,value: yes / no
+# $4: 工作目录
+# $5: 数据库连接串
+#-----------------------------------------------
 function expDataByTable(){
 	username=$1
 	tablename=$2
@@ -262,7 +216,6 @@ function expDataByTable(){
 	rm -rf ${4}/log/exp.${username}.${tablename}.log
 	eval "nohup exp ${5} rows=y ${scn_para} CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${4}/log/exp.${username}.${tablename}.log file=${4}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &"
 }
-
 
 # description: 函数根据数据库当前scn每个表生成一行导出脚本，写入到脚本文件
 # $1: 输出的sh file 
@@ -316,102 +269,6 @@ function log {
     echo -e "\n"
 }
 
-#-----------------------------------------
-# 根据用户名和表名生成导出脚本和parfile
-# $1: fromuser.fromtab
-# $2: parfile
-# $3: parfile template
-# $4: expdp script file
-# $5: expdp script file template
-#-----------------------------------------
-function genExpMetaParFileByTable(){
-   usertab=$1
-   parfile=$2
-   temp_par=$3
-   scrfile=$4
-   temp_spt=$5
-   cp ${temp_par} ${parfile}
-	# 替换parfile中的tables项的值
-	sed -i "/^tables=/c tables=${usertab}" $parfile
-   # 替换dumpfile的值
-	sed -i "/^dumpfile=/c dumpfile=meta.${usertab}.dmp" $parfile
-
-   cp ${temp_spt} ${scrfile}
-	# 替换expdp scritpfile中的parfile项的值
-	sed -i "/parfile=.*$/c parfile=${parfile}" ${scrfile}
-}
-
-#-----------------------------------------
-# $1: fromuser
-# $2: fromtable
-# $3: touser
-# $4: totable
-# $5: parfile
-# $6: parfile template
-# $7: impdp script file 
-# $8: impdp script file template
-#-----------------------------------------
-function genImpMetaParFileByTable(){
-   cp $6 $5
-	# 替换parfile中的tables项的值
-	sed -i "/^tables=/c tables=${1}" $5
-   # 替换dumpfile的值
-	sed -i "/^dumpfile=/c dumpfile=meta.${1}.${2}.dmp" $5
-   # 如果用户名存在映射
-	if [ "$1" != "$3" ]; then
-		sed -i '$a\remap_schema='${1}':'${3}'' $5
-	fi
-   # 如果表名存在映射
-	if [ "$2" != "$4" ]; then
-		sed -i '$a\remap_table='${2}':'${4}'' $5
-	fi
-
-   cp $8 $7
-	# 替换expdp scritpfile中的parfile项的值
-	sed -i "/parfile=.*$/c parfile=${5}" ${7}
-}
-
-#-----------------------------------------------------
-# $1: fromhostip
-# $2: tohostip
-# $3: fromfile
-# $4: todir
-# $5: tohostaccount
-# $6: tohostaccountpass
-# $7: ssh port
-# $8: local ip
-
-function copyFileToRemote(){
-   fip=$1
-   toip=$2
-   ffile=${3/,/ }
-   todir=$4
-   tuser=$5
-   tpass=$6
-   sshport=$7
-   localip=$8
-   # 如果源文件在本地机器上
-   if [ "$localip" == "$fip" ]; then
-      # 源机器与目标机器是同一台机器
-      if [ "$fip" == "$toip" ]; then
-         # 本地执行拷贝即可
-         cp $ffile $todir
-      else
-         # 从本地机器向目标端机器scp
-         sshpass -p $tpass scp -P $sshport $ffile ${tuser}@${toip}:${tdir}
-      fi
-   fi
-   # 如果源文件不在本地机器上 注意多个文件需要特殊处理
-   if [ "$localip" != "$fip" ]; then
-      # 拉取文件到本地
-      sshpass -p $tpass scp -P $sshport ${tuser}@${toip}:$ffile ${todir}
-      if [ "$fip" != "$toip" ]; then
-         # 拷贝到源端机器
-         sshpass -p $tpass scp -P $sshport $ffile ${tuser}@${toip}:${tdir}
-      fi
-   fi
-}
-
 #--------------------------------------------------------
 # 功能：根据表名从DB中统计表的大小
 # 返回：表大小 MB
@@ -432,9 +289,25 @@ function copyFileToRemote(){
 # 功能：从DB中查询某一类型的对象是否存在
 # 返回：存在：yes 不存在：no
 # $1: connection string
-# $2: 对象类型
-# $3: 对象名称
+# $2: 对象类型 as TALBESPACE
+# $3: 对象名称 as TBSDATA
 #--------------------------------------------------------
+function isObjectExist {
+_conn_str=${1}
+_OBJECT_TYPE=${2}
+_OBJECT_NAME=${3}
+
+IFEXIST=`sqlplus -S "${_conn_str}" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+SELECT COUNT(${_OBJECT_TYPE}_NAME) FROM DBA_${_OBJECT_TYPE}S WHERE ${_OBJECT_TYPE}_NAME='${_OBJECT_NAME}';
+exit;
+EOF`
+if [ $IFEXIST -eq 0 ]; then
+	echo "no"
+else
+   echo "yes"
+fi
+}
 
 #--------------------------------------------------------
 # 功能：从DB中获取创建表的sql
@@ -442,12 +315,15 @@ function copyFileToRemote(){
 # $2: user
 # $3: table
 # $4: 生成的sql文件名称
+# $5: 是否需要生成tablespace子句，TRUE/FALSE
 #--------------------------------------------------------
 function genSQLCreateTable() {
 _conn_str=$1
 USERNAME=$2
 TABLENAME=$3
 _sqlfile=$4
+_is_need_tbs=$5
+_is_need_tbs="TRUE"
 sqlplus -S "${_conn_str}" << EOF
 set echo off
 set pagesize 0
@@ -466,13 +342,13 @@ EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'CONSTRA
 EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'REF_CONSTRAINTS', FALSE);
 EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'CONSTRAINTS_AS_ALTER', FALSE);
 --关闭存储、表空间属性
---EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'STORAGE', FALSE);
---EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'TABLESPACE', FALSE);
+EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'STORAGE', FALSE);
+EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'TABLESPACE', ${_is_need_tbs});
 --关闭创建表的PCTFREE、NOCOMPRESS等属性
-EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'SEGMENT_ATTRIBUTES', FALSE);
+EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'SEGMENT_ATTRIBUTES', ${_is_need_tbs});
 spool $_sqlfile
 --导出表结构
-select dbms_metadata.get_ddl('TABLE', '$USERNAME', '$TABLENAME') from dual;
+select dbms_metadata.get_ddl('TABLE', '$TABLENAME', '$USERNAME') from dual;
 spool off;
 exit;
 EOF
@@ -496,19 +372,42 @@ EOF
 #--------------------------------------------------------
 # 功能：根据username,tablename,tablespace name的映射关系, 对建表和建索引语句进行替换
 # $1: sql file name
-# $2: 替换类型：username/tablename/tbsname
+# $2: 替换类型：value: username/tablename/tbsname
 # $3: 原值
 # $4: 新值
 #--------------------------------------------------------
 function filterEditSQLScript(){
-   echo "nana"
+   _s_type=$2
+   _s_file=$1
+   # 如果原值为 %,则替换为 \w+
+   _fromval=`if [ "$3" == "%" ]; then echo '\w+'; else echo $3; fi;`
+   _toval=$4
+
+   case "$_s_type" in
+      username )
+         sed -i 's/\"'${_fromval}'\"\./\"'${_toval}'\"\./g' $_s_file
+         ;;
+      tbsname )
+         sed -i 's/TABLESPACE \"'${_fromval}'\"/TABLESPACE \"'${_toval}'\"/g' $_s_file
+         ;;
+   esac
 }
 
 #--------------------------------------------------------
 # 功能：在DB中执行sql脚本
+# 返回：succeeded / failed
 # $1: connection string
 # $2: sql文件名称
 #--------------------------------------------------------
 function executeSQLScript() {
-
+sqlplus -S "$1" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+@ '$2'
+exit;
+EOF
+if [ $? -eq 0 ]; then
+	echo "succeeded"
+else
+   echo "failed"
+fi
 }
