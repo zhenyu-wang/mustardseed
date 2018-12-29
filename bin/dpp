@@ -44,13 +44,13 @@ function prerequisiteCheck {
    # 执行用户检查
    if [ "$_CUR_USER" != "$_DB_OS_USER" ]; then
       log "当前操作系统用户不正确，请使用${_DB_OS_USER}用户执行 $0"
-      exit
    fi
    # OCM软件环境检查
    # isInstallTool "sshpass"
    isInstallTool "sqlplus"
    # isInstallTool "expdp"
-   # isInstallTool "exp"
+   isInstallTool "exp"
+   isInstallTool "exp"
    pyModCheck "xlrd"
 }
 
@@ -252,12 +252,12 @@ if [ "$_TABLE"x != "x" ]; then
 
    # 不管是选择meta还是data都要检查目标用户名是否正确，不用检查表名，因为meta情况下本身表就应该是不存在的
    log "检查用户名:${TOUSER}在目标端数据库:${tnsname_tdb}是否存在"
-   if [ $(isObjectExist "$_TDB_CONN_STR" "USER" "${TOUSER}") == "no" ]; then
-      echo -e "USER: ${TOUSER}在${tnsname_tdb}中不存在 \n \
-         请确认目标用户名填写正确 \n \
-         或在目标端数据库:${tnsname_tdb}中先创建用户 ${TOUSER}"
-      exit
-   fi
+	if [ $(isUserExist ${_TDB_CONN_STR} "USER" ${TOUSER}) == "no" ]; then
+      echo -e "用户: ${TOUSER}在${tnsname_tdb}中不存在 \n \
+      请确认目标用户名填写正确 \n \
+      或在目标端数据库:${tnsname_tdb}中先创建用户 ${TOUSER}"
+		exit
+	fi
 
    # 如果表空间名存在映射，校验tablespace是否在SDB, TDB存在
    if [ -n "${_REMAP_TBS}" ]; then

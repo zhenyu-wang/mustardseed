@@ -291,14 +291,36 @@ function log {
 # $2: 对象类型 as TALBESPACE
 # $3: 对象名称 as TBSDATA
 #--------------------------------------------------------
+function isUserExist {
+_conn_str=${1}
+_OBJECT_TYPE=${2}
+_OBJECT_NAME=${3}
+IFEXIST=`sqlplus -S "${_conn_str}" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+SELECT COUNT(${_OBJECT_TYPE}NAME) FROM DBA_${_OBJECT_TYPE}S WHERE ${_OBJECT_TYPE}NAME='${_OBJECT_NAME}';
+exit;
+EOF`
+if [ $IFEXIST -eq 0 ]; then
+	echo "no"
+else
+   echo "yes"
+fi
+}
+
+#--------------------------------------------------------
+# 功能：从DB中查询某一类型的对象是否存在
+# 返回：存在：yes 不存在：no
+# $1: connection string
+# $2: 对象类型 as TALBESPACE
+# $3: 对象名称 as TBSDATA
+#--------------------------------------------------------
 function isObjectExist {
 _conn_str=${1}
 _OBJECT_TYPE=${2}
 _OBJECT_NAME=${3}
-
 IFEXIST=`sqlplus -S "${_conn_str}" << EOF
 set heading off feedback off pagesize 0 verify off echo off
-SELECT COUNT(${_OBJECT_TYPE}_NAME) FROM DBA_${_OBJECT_TYPE}S WHERE ${_OBJECT_TYPE}_NAME='${_OBJECT_NAME}';
+SELECT COUNT(${_OBJECT_TYPE}NAME) FROM DBA_${_OBJECT_TYPE}S WHERE ${_OBJECT_TYPE}NAME='${_OBJECT_NAME}';
 exit;
 EOF`
 if [ $IFEXIST -eq 0 ]; then
