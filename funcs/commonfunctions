@@ -1,0 +1,176 @@
+#! /bin/env bash
+
+# created on 2018-11-20, by zhenyu-wang
+
+function is_file {
+	if [ ! -f "$1" ] ; then
+		echo "文件:$1 不存在或文件路径及名称错误。"
+		exit 2
+	fi
+}
+
+function is_dir {
+	if [ ! -d "$1" ] ; then
+		echo "目录: $1 不存在。"
+		exit 2
+	fi
+}
+
+# 规范[表清单需求文件]的内容
+# 删除空行、dos符号、全部转换成大写
+# 参数输入：[表清单需求文件]的名字
+function handleFormat {
+	is_file "$1"
+	sed -i 's/^M//' $1
+	sed -i '/^$/d' $1
+	sed -i 's/[a-z]/\u&/g' $1
+}
+
+# 判断要导的表在sourceDB是否都存在
+# $1: 表名 或 需求文件名
+# $2: 数据库连接串,默认值："/ as sysdba"
+function isTableExist {
+_conn_str=${2:-"/ as sysdba"}
+# 默认表都存在，否则则返回 0，终止程序执行
+cou_noext_tab=0
+# 如果参数是一个文件，则使用文件中的内容进行判断
+if [ -f $1 ]; then
+while read line
+do
+USERNAME=`echo $line | cut -d ' ' -f 1`
+TABLENAME=`echo $line | cut -d ' ' -f 2` 
+IFEXIST=`sqlplus -S "${_conn_str}" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+select count(*) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
+exit;
+EOF`
+if [ $IFEXIST == "0" ]; then
+	((cou_noext_tab++));
+	echo "表: ${USERNAME}.$TABLENAME 在源端数据库中不存在。"
+fi
+done < $1
+# 如果参数是一个表名，则根据表名进行判断
+# 参数的格式为USER.TAB
+else
+USERNAME=`echo $1 | cut -d '.' -f 1 | tr [a-z] [A-Z]`
+TABLENAME=`echo $1 | cut -d '.' -f 2 | tr [a-z] [A-Z]` 
+IFEXIST=`sqlplus -S "${_conn_str}" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+select count(*) from dba_tables where owner='${USERNAME}' and table_name='${TABLENAME}';
+exit;
+EOF`
+if [ $IFEXIST == "0" ]; then
+	((cou_noext_tab++));
+	echo "表: ${USERNAME}.$TABLENAME 不存在。"
+fi
+fi
+# 如果发现了不存在的表，退出终止程序执行
+if [ $cou_noext_tab -gt 0 ]; then
+	exit $cou_noext_tab
+fi
+}
+
+
+# truncate TDB's tables
+# 参数：
+#	1 数据库连接串
+#	2 tablename
+function truncateTable {
+checkDBConnection $1
+(sqlplus -S "$1" << EOF
+truncate table $2;
+exit;
+EOF
+) | grep -i "Table truncated" > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+	echo "目标数据库中不存在表: $2"
+	exit
+fi
+}
+
+# 检查数据库是否可以连接成功
+# 以数据库连接串作为参数
+function checkDBConnection {
+isInstallTool "sqlplus"
+(sqlplus -S "$1" << EOF
+select status from v\$instance;
+exit;
+EOF
+) | grep OPEN > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+	echo "${1} 数据库无法连接"
+	exit
+fi
+}
+
+# $1: directory name
+# $2: os directory
+# $3: db connections strin, default "/ as sysdba"
+function createDBDirectory {
+dir_name=$1
+dir_path=$2
+conn_str=${3:-"/ as sysdba"}
+# create directory for oracle database
+echo "创建数据库的directory"
+sqlplus -S "$conn_str" << EOF
+create or replace directory ${dir_name} as '${dir_path}';
+--grant read, write on directory ${dir_name} to system;
+grant read, write on directory ${dir_name} to sys;
+exit;
+EOF
+}
+
+
+
+# Description: mknod for tables on OCM/source database
+# parameters: 
+# $1: 需求文件或 用户.表名(pipe名字)
+# $2: 创建pipe文件的路径
+function makePipe(){
+   # 如果参数是文件，是批量创建的方式
+	if [ -f "$1" ]; then
+      rm -rf ${2}/*
+      tables=`awk '{print $1 "." $2}' $1 | tr -t "\n" " " | sed -e 's/ $/\n/'`
+      for pipe_name in ${tables}; do
+         mknod ${2}/${pipe_name} p
+      done
+   else
+      # 根据传如的user.table创建pipe node
+      rm -rf ${2}/$1
+      mknod ${2}/$1 p
+   fi
+}
+
+
+
+################################################
+# 获取数据scn号，并返回
+# 参数1：数据库连接串,若未指定参数，默认为"/ as sysdba"
+################################################
+function getCurrentScn(){
+deconstr="/ as sysdba"
+CONNSTR=${1:-$deconstr}
+CURRENT_SCN=`sqlplus -S "$CONNSTR" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+select to_char(current_scn,'999999999999999999') from v\\$database;
+exit;
+EOF`
+echo $(($CURRENT_SCN))
+}
+
+
+# 判断是否已经安装了sshpass工具，如果没有安装则自动安装
+function isInstallTool(){
+which $1>/dev/null 2>&1
+if [ "$?" -eq 1 ]; then 
+	echo "服务器没有安装$1。" 
+	exit
+fi
+}
+
+
+function log {
+    echo -e "\n"
+    printf -- "$@"
+    echo -e "\n"
+}

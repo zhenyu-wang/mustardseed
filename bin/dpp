@@ -1,0 +1,477 @@
+#! /usr/bin/bash
+
+#---------------------------------------------------------
+# 功能描述：
+# 	此脚本根据传递的表执行导出和导入
+#	适用于单独对几个表进行导出导入，基于表结构已经同步完成
+# 2018-12-06 zhenyu-wang created
+#---------------------------------------------------------
+
+_CUR_USER=`whoami`
+# 数据库软件的OS用户
+_DB_OS_USER="oracle"
+# dpp脚本的目录
+_DPP_SCR_DIR=$(cd $(dirname ${BASH_SOURCE[0]}); pwd )
+# DPP的工作目录
+DPPDIR=${_DPP_SCR_DIR%/*}
+# DPP函数文件路径
+_DPP_FUNC=${DPPDIR}/funcs/dppfunctions
+# 公共函数文件路径
+_COMMON_FUNC=${DPPDIR}/funcs/commonfunctions
+# DPP默认配置文件路径
+_CONFIGFILE=${DPPDIR}/conf/dpp.conf
+
+# 加载公共函数
+source ${_COMMON_FUNC}
+# 加载函数
+source ${_DPP_FUNC}
+
+# 校验是否安装了pytho某个模块的函数
+function pyModCheck {
+   if python -c "import $1" >/dev/null 2>&1
+   then
+      echo "python 模块 $1 ----已经安装"
+   else
+      echo -e "未安装 python模块 $1 \n \
+      请使用root用户到 $DPPDIR/tools/${1} 下 \n \
+      执行： python setup.py install 进行安装"
+      exit
+   fi
+}
+
+# 检查使用ddp工具之前的前提条件检查函数
+function prerequisiteCheck {
+   # 执行用户检查
+   if [ "$_CUR_USER" != "$_DB_OS_USER" ]; then
+      log "当前操作系统用户不正确，请使用${_DB_OS_USER}用户执行 $0"
+      exit
+   fi
+   # OCM软件环境检查
+   # isInstallTool "sshpass"
+   isInstallTool "sqlplus"
+   # isInstallTool "expdp"
+   # isInstallTool "exp"
+   pyModCheck "xlrd"
+}
+
+function usage {
+	echo -e "Usage: $0 [--confile={config file}] \n \
+[--reqfile={reqfile name} --content=meta|data [--withscn]] \n \
+[--table=fromuser.oldtable[:touser[.newtable]] [--content=meta|data] [--withscn]] \n \
+[--remaptbs=tbs1:tbs2,tbs3:tbs4|%:tbs5]
+[--where=query_condition] \n \
+[--check=all|configfile] \n \
+[--status=all|fromuser.tablename] \n \
+[-h|-help|--help]"
+   echo -e "\n \
+   功能说明：\n \
+   根据需求文件批量导出导入、或根据单表执行导出导入 \n \
+   --confile 可选，指定配置文件的位置，默认加载 conf/dpp.conf \n \
+   --table=参数格式: user1.tab1:user2:tab2 目前仅支持用户名的remap \n \
+   --status 实时监控查看指定表当前的导出、导入状态 \n \
+   --withscn 仅在使用--table或--reqfile时指定
+   --reqfile 按指定的需求文件执行导出导入，与--content必须同时指定，文件类型必须为excel文件，文件名必须为英文字母 \n \
+   不能同时指定--reqfile和--table"
+   echo -e "\n \
+   使用前提：\n \
+   DPP工具需要运行在一台linux服务器上，作为操作终端(OCM)，也可以将源端数据库作为操作终端 \n \
+   OCM需安装 oracle 客户端及sqlplus, python模块:xlrd"
+}
+
+log "运行环境检查！"
+prerequisiteCheck
+
+# 设置变量_TABLE内容均为大写
+typeset -u _TABLE
+_TABLE=""
+# 是否选择根据SDB当前scn号导出数据,默认不使用
+WITHSCN=false
+# 需求文件默认不指定
+_REQFILE=""
+# 导出内容默认不指定
+_DPP_CONTENT=""
+# 设置remap_tablespace初始值为空
+typeset -u _REMAP_TBS
+_REMAP_TBS=""
+# 参数的总数量,初始为0个参数
+_COU_ARGS=0
+
+_TO_GETSTATUS=""
+_TO_CHECK=""
+
+# set之后的--代表set的内容中如果存在- ,不将其作为参数
+# "$@"之前的--是为了最后参数的处理结束判断
+TMPARGS=$(getopt -o "h" -al "status:,help,confile:,table:,check:,content:,withscn,reqfile:,remaptbs:" -- "$@")
+
+eval set -- $TMPARGS
+
+while [[ ${1##-*} = "" ]]
+do
+   # 总参数个数+1
+   ((_COU_ARGS++))
+
+	case "$1" in
+	  	-table | --table )
+	    	# 三种参数格式，匹配其中一种即为合法，其中 -x 参数是整行匹配，必须添加，否则aa.bb?也会认为是合法的
+         # -z 若长度为0，没有匹配成功
+			if [ -z $(echo $2 | grep -x -E '\w+\.\w+\:\w+|\w+\.\w+|\w+\.\w+\:\w+.\w+') ]; then
+			   usage
+			   exit
+			fi
+			echo "table原始值：$2"
+			_TABLE=${2}
+			shift 2;;
+		-h | -help | --help )
+         # 如果指定了-h，则不做任何操作，显示帮助信息并推出程序
+         usage
+         exit
+         ;;
+		-check | --check )
+			echo "check value:  $2"
+		   shift 2;;
+		-status | --status )
+			_TO_GETSTATUS=$2
+		   shift 2;;
+		-reqfile | --reqfile )
+			_REQFILE=$2
+			is_file $_REQFILE
+         _EXT_NAME=${_REQFILE##*.}
+         if [ "$_EXT_NAME" != "xls" ] && [ "$_EXT_NAME" != "xlsx"  ]; then
+            log "需求文件的类型必须为excel,文件扩展名必须为xls或xlsx"
+            usage
+            exit
+         fi
+		   shift 2;;
+		-content | --content )
+			_DPP_CONTENT=$2
+         if [ "$_DPP_CONTENT" != "meta" -a  "$_DPP_CONTENT" != "data" ]; then 
+            log "--content的值只能为meta或all"
+            usage
+            exit
+         fi
+		   shift 2;;
+		-remaptbs | --remaptbs )
+			_REMAP_TBS=$2
+		   shift 2;;
+		-confile | --confile )
+			_CONFIGFILE=$2
+			echo "config file :  $_CONFIGFILE"
+		   shift 2;;
+		-withscn | --withscn )
+			WITHSCN=true
+		   shift;;
+		--) 
+         # 这里判断参数组合逻辑,到了 -- 已经是最后一个参数
+         # 参数个数为1，说明没有指定任何参数，则显示帮助信息
+         if [ $_COU_ARGS -eq 1 ]; then log "请指定参数！"; usage; exit; fi;
+
+         # --table与--reqfile不能同时指定
+         if [ -n "$_TABLE" ] && [ -n "$_REQFILE" ]; then log "--table和--reqfile不能同时指定"; usage; exit; fi;
+
+         # 指定--reqfile时必须同时指定--content
+         if [ -n "$_REQFILE" ] && [ -z "$_DPP_CONTENT" ]; then log "指定--reqfile时必须同时指定--content"; usage; exit; fi;
+
+         # 指定--table时必须同时指定--content
+         if [ -n "$_TABLE" ] && [ -z "$_DPP_CONTENT" ]; then log "指定--table参数的同时需要指定--content"; usage; exit; fi;
+         # --status只能单独指定，不能与其它参数同时使用
+         if [ -n "$_TO_GETSTATUS" -a $_COU_ARGS -ge 3 ]; then log "--status 只能单独指定，不能与其它参数同时使用"; usage; exit; fi;
+
+         shift
+			break
+			;;
+      *)
+         log "参数 $1 不合规"
+         usage
+         break
+         ;;
+	esac
+done
+
+# 先检查、判断和加载配置文件 config file，默认加载 conf/dpp.conf
+# 当手动指定了--conffile参数时，则加载指定的配置文件
+log "检查配置文件：$_CONFIGFILE 内容格式是否符合要求"
+
+is_file $_CONFIGFILE
+source $_CONFIGFILE
+
+# SDB, TDB 数据库连接串
+_SDB_CONN_STR="system/$sdb_system_pass@$tnsname_sdb"
+_TDB_CONN_STR="system/$tdb_system_pass@$tnsname_tdb"
+
+log "检查源端数据库:${tnsname_sdb}的可连接性"
+if [ `checkDBConnection "$_SDB_CONN_STR"` == "no" ]; then
+   echo "源端数据库:${tnsname_sdb}无法连接"
+   exit
+else
+   echo "成功"
+fi
+
+log "检查目标端数据库:${tnsname_tdb}的可连接性"
+if [ `checkDBConnection "$_TDB_CONN_STR"` == "no" ]; then
+   echo "目标端数据库:${tnsname_tdb}无法连接"
+   exit
+else
+   echo "成功"
+fi
+
+# 如果以表的方式执行导出导入
+if [ "$_TABLE"x != "x" ]; then
+   log "开始参数值解析"
+   # 取第一个.之前的内容，即为fromuser，%%从后开始匹配 .* 并删除最长的匹配，保证只剩下fromuser
+   FROMUSER=${_TABLE%%.*}
+   echo "fromuser: $FROMUSER"
+   # touser如果取到的值为空，那么设置为与fromuser相同
+   TOUSER=$(echo $_TABLE | awk -F ':' '{print $2}' | awk -F '.' '{print $1}')
+   TOUSER=${TOUSER:-$FROMUSER}
+   echo "touser:  $TOUSER"
+   FROMTAB=$(echo $_TABLE | awk -F ':' '{print $1}' | awk -F '.' '{print $2}')
+   echo "fromtable: $FROMTAB"
+   # totab如果取到的值为空，那么设置为与fromtab相同
+   TOTAB=$(echo $_TABLE | awk -F ':' '{print $2}' | awk -F '.' '{print $2}')
+   TOTAB=${TOTAB:-$FROMTAB}
+   echo "totable: $TOTAB"
+
+   # 默认不需要表空间转换 
+   is_need_remap_tbs="FALSE"
+
+   # 默认不需要用户名转换 
+   is_need_remap_user="no"
+
+   # 如果用户名存在映射
+   if [ "${FROMUSER}" != "${TOUSER}" ]; then
+      is_need_remap_user="yes"
+   fi
+
+   log "检查表:${FROMUSER}.${FROMTAB}在源端数据库:${tnsname_sdb}是否存在"
+   if [ $(isTableExist "$_SDB_CONN_STR" "${FROMUSER}" "${FROMTAB}") == "no" ]; then
+      echo "表:${FROMUSER}.${FROMTAB}在源端数据库:${tnsname_sdb}不存在"
+      exit
+   else
+      echo "成功"
+   fi
+
+   # 不管是选择meta还是data都要检查目标用户名是否正确，不用检查表名，因为meta情况下本身表就应该是不存在的
+   log "检查用户名:${TOUSER}在目标端数据库:${tnsname_tdb}是否存在"
+   if [ $(isObjectExist "$_TDB_CONN_STR" "USER" "${TOUSER}") == "no" ]; then
+      echo -e "USER: ${TOUSER}在${tnsname_tdb}中不存在 \n \
+         请确认目标用户名填写正确 \n \
+         或在目标端数据库:${tnsname_tdb}中先创建用户 ${TOUSER}"
+      exit
+   fi
+
+   # 如果表空间名存在映射，校验tablespace是否在SDB, TDB存在
+   if [ -n "${_REMAP_TBS}" ]; then
+      is_need_remap_tbs="TRUE"
+      # 循环判断
+      for i in $(echo $_REMAP_TBS | tr ',' ' '); do
+         FROMTBS=$(echo $i | cut -d':' -f 1)
+         TOTBS=$(echo $i | cut -d':' -f 2)
+
+         # 如果原表空间名没有指定通配符'%',需要检查表空间名在源端数据库中是否存在
+         # 如果使用中指定了 %:tbsdata ，那么应该只能指定一个，不能写成 %:tbs2,tbsa:tbstt
+         # 如果这样写 %:tbs2,tbsa:tbstt,程序不会受影响，只不过没有必要
+         if [ "$FROMTBS" != "%" ]; then
+            log "检查表空间： ${FROMTBS} 在数据库： ${tnsname_sdb} 中是否存在"
+            if [ $(isObjectExist "$_SDB_CONN_STR" "TABLESPACE" "${FROMTBS}")  == "no" ]; then
+               echo -n "TABLESPACE: ${FROMTBS}在源数据库：${tnsname_sdb}中不存在 \n \
+                  请确认源表空间名填写正确"
+               exit
+            fi
+         fi
+         
+         log "检查表空间： ${TOTBS} 在数据库： ${tnsname_tdb} 中是否存在"
+         if [ $(isObjectExist "$_TDB_CONN_STR" "TABLESPACE" "${TOTBS}")  == "no" ]; then
+            echo -n "TABLESPACE: ${TOTBS}在${tnsname_tdb}中不存在 \n \
+               请确认目标表空间名 ${TOTBS}填写正确 \n \
+               或在目标端数据库:${tnsname_tdb}中先创建表空间 ${TOTBS}"
+            exit
+         fi
+      done
+   fi
+
+   if [ "$_DPP_CONTENT" == "meta" ]; then
+      log "开始进行表结构的同步"
+
+      # 生成原始建表SQL
+      genSQLCreateTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs"
+      # 如果存在用户映射关系，替换脚本文件中的用户
+      if [ "$is_need_remap_user" == "yes" ]; then
+         filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "username" "${FROMUSER}" "${TOUSER}" 
+      fi
+
+      # 如果存在表空间映射关系，替换脚本文件中的原表空间名
+      if [ "$is_need_remap_tbs" == "TRUE" ]; then
+         for i in $(echo $_REMAP_TBS | tr ',' ' '); do
+            FROMTBS=$(echo $i | cut -d':' -f 1)
+            TOTBS=$(echo $i | cut -d':' -f 2)
+            filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOUTBS}" 
+         done
+      fi
+
+      # 如果不是第一次导meta
+      log "检查表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}是否已经存在"
+      if [ $(isTableExist "$_TDB_CONN_STR" "${TOUSER}" "${TOTAB}") == "yes" ]; then
+         echo "表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}已经存在"
+         echo "WARNING: 此过程会删除目标端数据库: ${tnsname_tdb} 中表: ${TOUSER}.${TOTAB} 的所有数据"
+         dropTable "$_TDB_CONN_STR" "${TOUSER}.${TOTAB}"
+      fi
+
+      log "在数据库：${tnsname_tdb}中创建表：${TOUSER}.${TOTAB}"
+      executeSQLScript "$_TDB_CONN_STR" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+   fi
+   
+   if [ "$_DPP_CONTENT" == "data" ]; then
+      log "检查表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}是否存在"
+      if [ $(isTableExist "$_TDB_CONN_STR" "${TOUSER}" "${TOTAB}") == "no" ]; then
+         echo -e "表: ${TOUSER}.${TOTAB}在目标端数据库: ${tnsname_tdb}中不存在 \n \
+            请确定用户名和表名输入正确 \n \
+            或指定--content=meta先同步表结构"
+         exit
+      else
+         echo "成功"
+      fi
+
+      log "WARNING: 在目标端数据库：${tnsname_tdb}上执行： truncate table ${TOUSER}.${TOTAB}"
+      truncateTable "$_TDB_CONN_STR" "${TOUSER}.${TOTAB}"
+
+      log "创建pipe file"
+      makePipe "${FROMUSER}.${FROMTAB}" "$DPPDIR/pipe"
+
+      log "执行导入"
+      ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$DPPDIR" "$_TDB_CONN_STR"
+
+      log "执行导出"
+      expDataByTable ${FROMUSER} ${FROMTAB} "$(if $WITHSCN; then echo yes;else echo no;fi;)" "$DPPDIR" "$_SDB_CONN_STR"
+   fi
+fi
+
+#----------------------------------------------
+# 如果以需求文件的方式批量导出导入表
+# 文件为excel文件，格式参考帮助文档
+#----------------------------------------------
+if [ -n "$_REQFILE" ]; then
+   log "开始按需求文件 $_REQFILE 中所列的表执行导出导入"
+
+   log "解析和处理需求文件: $_REQFILE ,最终生成tablelist.conf在conf下"
+   # 需求文件的语法检查，3、4列的赋值(不存在用户名、表名映射)在py脚本中进行
+   python $DPPDIR/funcs/genTableList.py $_REQFILE|tr [a-z] [A-Z]|sed 's/[ \t]*$//g'>$DPPDIR/conf/tablelist.conf
+
+   # 默认不需要表空间转换，没有指定--remaptbs参数
+   is_need_remap_tbs="FALSE"
+
+   # 检查表在源端是否存在，避免表名填写错误
+   while read FROMUSER FROMTAB TOUSER
+   do
+      log "检查表:${FROMUSER}.${FROMTAB}在源端数据库:${tnsname_sdb}是否存在"
+      if [ $(isTableExist "$_SDB_CONN_STR" "${FROMUSER}" "${FROMTAB}") == "no" ]; then
+         echo "表:${FROMUSER}.${FROMTAB}在源端数据库:${tnsname_sdb}不存在"
+         exit
+      else
+         echo "成功"
+      fi
+   done < $DPPDIR/conf/tablelist.conf
+
+   # 验证用户名在目标库中是否存在
+   cat  $DPPDIR/conf/tablelist.conf | awk -F ' ' '{print $3}' | uniq |
+   while read TOUSER
+   do
+      if [ $(isObjectExist "$_TDB_CONN_STR" "USER" "${TOUSER}") == "no" ]; then
+         echo "USER: ${TOUSER}在${tnsname_tdb}中不存在"
+         exit
+      fi
+   done
+
+   # 如果指定了--remaptbs，校验tablespace是否在SDB, TDB存在
+   if [ -n "${_REMAP_TBS}" ]; then
+      is_need_remap_tbs="TRUE"
+
+      # 循环判断
+      for i in $(echo $_REMAP_TBS | tr ',' ' '); do
+         FROMTBS=$(echo $i | cut -d':' -f 1)
+         TOTBS=$(echo $i | cut -d':' -f 2)
+
+         # 如果原表空间名没有指定通配符'%',需要检查表空间名在源端数据库中是否存在
+         if [ "$FROMTBS" != "%" ]; then
+            log "检查表空间： ${FROMTBS} 在数据库： ${tnsname_sdb} 中是否存在"
+            if [ $(isObjectExist "$_SDB_CONN_STR" "TABLESPACE" "${FROMTBS}")  == "no" ]; then
+               echo "TABLESPACE: ${FROMTBS}在${tnsname_sdb}中不存在"
+               exit
+            fi
+         fi
+         
+         log "检查表空间： ${TOTBS} 在数据库： ${tnsname_tdb} 中是否存在"
+         if [ $(isObjectExist "$_TDB_CONN_STR" "TABLESPACE" "${TOTBS}")  == "no" ]; then
+            echo "TABLESPACE: ${TOTBS}在${tnsname_tdb}中不存在"
+            exit
+         fi
+      done
+   fi
+
+   if [ "$_DPP_CONTENT" == "meta" ];
+   then
+
+      while read FROMUSER FROMTAB TOUSER TOTAB QUERY
+      do
+         # 生成原始建表SQL
+         genSQLCreateTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs"
+
+         # 如果存在用户映射关系，替换用户名
+         if [ "$FROMUSER" != "$TOUSER" ]; then
+            filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "username" "${FROMUSER}" "${TOUSER}" 
+         fi
+
+         # 如果存在表空间映射关系，替换表空间
+         if [ "$is_need_remap_tbs" == "TRUE" ]; then
+            for i in $(echo $_REMAP_TBS | tr ',' ' '); do
+               FROMTBS=$(echo $i | cut -d':' -f 1)
+               TOTBS=$(echo $i | cut -d':' -f 2)
+               filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOUTBS}" 
+            done
+         fi
+
+         # 不是第一次导表结构meta或数据
+         log "检查表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}是否已经存在"
+         if [ $(isTableExist "$_TDB_CONN_STR" "${TOUSER}" "${TOTAB}") == "yes" ]; then
+            echo "表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}已经存在"
+            echo "WARNING: 此过程会删除目标端数据库:${tnsname_tdb} 中表:${TOUSER}.${TOTAB}的所有数据"
+            dropTable "$_TDB_CONN_STR" "${TOUSER}.${TOTAB}"
+         fi
+
+         log "在数据库：${tnsname_tdb}中创建表：${TOUSER}.${TOTAB}"
+         executeSQLScript "$_TDB_CONN_STR" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+      done < $DPPDIR/conf/tablelist.conf
+   fi
+
+   if [ "$_DPP_CONTENT" == "data" ];
+   then
+      # 将scn号的传递放在expDataByTable函数外面，为了生成一样的scn号
+      if $WITHSCN; then
+         log "源端数据库 ${tnsname_sdb} SCN号为："
+      fi
+
+      while read FROMUSER FROMTAB TOUSER TOTAB QUERY
+      do
+         log "检查表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}是否存在"
+         if [ $(isTableExist "$_TDB_CONN_STR" "${TOUSER}" "${TOTAB}") == "no" ]; then
+            echo -e "表: ${TOUSER}.${TOTAB}在目标端数据库: ${tnsname_tdb}中不存在 \n \
+               请确定用户名和表名输入正确 \n \
+               或指定--content=meta先同步表结构"
+            exit
+         else
+            echo "成功"
+         fi
+
+         log "WARNING: 在目标端数据库：${tnsname_tdb}上执行： truncate table ${TOUSER}.${TOTAB}"
+         truncateTable "$_TDB_CONN_STR" "${TOUSER}.${TOTAB}"
+
+         log "创建pipe file"
+         makePipe "${FROMUSER}.${FROMTAB}" "$DPPDIR/pipe"
+
+         log "执行导入"
+         ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$DPPDIR" "$_TDB_CONN_STR"
+
+         log "执行导出"
+         expDataByTable ${FROMUSER} ${FROMTAB} "$(if $WITHSCN; then echo yes;else echo no;fi;)" "$DPPDIR" "$_SDB_CONN_STR"
+      done
+   fi
+fi

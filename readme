@@ -1,0 +1,46 @@
+【功能说明】
+   此工具用于将数据从一个oracle数据库导入到另一个oracle数据库
+   使用此工具不需要源端数据库（SDB）和目标端数据库（TDB）申请额外的目录空间
+   工具按表并发执行导出和导入，一个表一个进程
+   2018年12月17日补充
+	这是一个工具集，包含若干功能
+
+【使用限制】
+   OS: Linux
+   Oracle: 10g & 11g
+   网络带宽：SDB到TDB至少10MB/s
+
+【使用前提】
+	1、TDB的undo要大一些，至少30G
+	2、为了性能，TDB尽量在非归档模式下进行导入
+	3、TDB的表空间和用户要提前建好，建议表空间使用一个即可，大小必须满足数据量需求
+	4、导数操作在SDB上进行，需要配置到TDB和SDB（本地数据库）的tnsname
+	5、需要SDB、TDB的system密码，TDB操作系统用户oracle的密码
+	6、SDB需要安装sshpass和xlrd(python模块)
+
+【使用方法】
+需求整理
+	1、需要导的表，以： 源用户、源表、目标用户、目标表、导出条件
+		整理到excel表格中，模板依照 template.xlsx
+修改配置
+	修改配置文件dpp.conf，所有的配置都体现在此文件中，根据实际情况修改相关项目
+脚本上传
+	将DPP文件夹上传到SDB oracle用户home目录下	
+脚本执行
+   1. copy whole datapipeport(DPP) directory to source database and target database
+   2. gather requrements in tablelist.txt, head columns: fromuser tablename  touser  tablename
+   3. edit dpp.conf on source db.
+   4. excute sdb_exp_meta.sh, on sdb
+   5. excute tdb_imp_meta.sh, on tdb
+   6. excute sdb_data_pump.sh, on sdb
+【功能列表】
+	解析xls文件，并生成需求文件	
+		gentablelist.sh
+	根据需求文件导出SDB的表结构，导入到TDB(均为oracle11g或更新版本) 
+		sdb_exp_meta.sh
+	根据SDB当前scn导出表数据，并导入到SDB
+		sdb_data_pump.sh
+
+	
+【配置项说明】
+	详见dpp.conf文件中的注释
