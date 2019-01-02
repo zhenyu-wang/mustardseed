@@ -52,18 +52,6 @@ else
 fi
 }
 
-# 生成用户的映射关系，并更新配置文件dpp.conf
-# 映射关系只体现用户名发生变化的，如果所有用户名都与原来的一样，dpp.conf中的remap_users值将为空
-# $1：需求文件
-# $2：配置文件 dpp.conf
-function setRemapUsers {
-	# 只取fromuser与touser不同的映射，每组映射之间用“，”逗号隔开，并变为一行
-	remap_users=`awk '{if($1 != $3) print $1 ":" $3}' "$1" | uniq | tr -t "\n" "," | sed -e 's/,$/\n/'`
-	# 自动更新dpp.conf配置文件中用户映射的值
-	echo "setRemapUsers 配置文件: $2"
-	sed -i "/^remap_users=/c remap_users=\"${remap_users}\"" $2
-}
-
 # truncate DB's tables
 # 参数：
 #	$1 database connection string
@@ -116,21 +104,6 @@ else
 fi
 }
 
-# $1: directory name
-# $2: os directory
-# $3: db connections strin, default "/ as sysdba"
-function createDBDirectory {
-dir_name=$1
-dir_path=$2
-conn_str=${3:-"/ as sysdba"}
-sqlplus -S "$conn_str" << EOF
-create or replace directory ${dir_name} as '${dir_path}';
---grant read, write on directory ${dir_name} to system;
-grant read, write on directory ${dir_name} to sys;
-exit;
-EOF
-}
-
 # Description: mknod pipe file for tables on OCM
 # parameters: 
 # $1: pipe file name
@@ -159,26 +132,6 @@ function ImpDataByTable(){
 	eval "nohup imp ${6} commit=y ignore=y file=${5}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${5}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &"
 }
 
-# 功能：生成导入脚本文件
-# $1: 输出要产生的脚本文件名
-# $2: 需求文件
-# $3: 数据库连接串
-function genImpScript(){
-   impshfile=$1
-   connstr=$3
-   workdir=${impshfile%/script/*}
-   # 生成导入脚本文件
-   touch $impshfile
-	cat /dev/null > $impshfile
-	while read username tablename tousername totabname query
-	do
-      # 先清理日志
-      rm -rf ${workdir}/log/imp.${username}.${tablename}.log
-	   echo "nohup imp ${connstr} commit=y ignore=y file=${workdir}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${workdir}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &" >> $impshfile
-	done < $2
-	chmod +x $impshfile
-}
-
 #------------------------------------------------------
 # 功能：获取数据scn号，并返回
 # 返回：scn号
@@ -198,53 +151,24 @@ echo $(($CURRENT_SCN))
 # 功能: 根据单表名执行导出
 # $1: 用户名
 # $2: 表名
-# $3: 是否根据当前scn导出,value: yes / no
+# $3: scn参数串，当没有使用--witchscn时，为null
 # $4: 工作目录
 # $5: 数据库连接串
 #-----------------------------------------------
 function expDataByTable(){
 	username=$1
 	tablename=$2
-	# 判断是否需要获取SDB当前的scn号,默认scn参数为空
-	scn_para=""
-   # 如果是否需要scn的参数值为yes，则生成scn，并组拼exp的参数串
-   if [ "$3" == "yes" ]; then
-      scn_no=`getCurrentScn "$5"`
-	   scn_para="FLASHBACK_SCN=${scn_no}" 
-   fi
+   # 如果传递的值为null，则替换为""值
+	scn_para=${3%null}
 	rm -rf ${4}/log/exp.${username}.${tablename}.log
 	eval "nohup exp ${5} rows=y ${scn_para} CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${4}/log/exp.${username}.${tablename}.log file=${4}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &"
-}
-
-# description: 函数根据数据库当前scn每个表生成一行导出脚本，写入到脚本文件
-# $1: 输出的sh file 
-# $2: 需求文件
-# $3: 数据库连接串
-# $4: 是否根据snc号导出
-function genExpScript(){
-   connstr=$3
-   workdir=${1%/script/*}
-   touch $1
-	rm -rf ${workdir}/log/exp.*.log
-   cat /dev/null > $1
-   scn_para=""
-   if [ $4 == "yes" ]; then
-      scn_no=`getCurrentScn "$connstr"`
-	   scn_para="FLASHBACK_SCN=${scn_no}" 
-   fi
-
-	while read username tablename tousername totabname query
-	do
-		echo "nohup exp ${connstr} ${scn_para} rows=y CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${workdir}/log/exp.${username}.${tablename}.log file=${workdir}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &" >> $1
-	done < $2
-	chmod +x $1
 }
 
 # 判断是否已经安装了sshpass工具，如果没有安装则自动安装
 function isInstallTool(){
 which $1>/dev/null 2>&1
 if [ "$?" -eq 1 ]; then 
-	echo "服务器没有安装$1。" 
+	echo "服务器没有安装${1}或当前用户没有执行${1}的权限。" 
 	exit
 fi
 }
@@ -320,7 +244,7 @@ _OBJECT_TYPE=${2}
 _OBJECT_NAME=${3}
 IFEXIST=`sqlplus -S "${_conn_str}" << EOF
 set heading off feedback off pagesize 0 verify off echo off
-SELECT COUNT(${_OBJECT_TYPE}NAME) FROM DBA_${_OBJECT_TYPE}S WHERE ${_OBJECT_TYPE}NAME='${_OBJECT_NAME}';
+SELECT COUNT(${_OBJECT_TYPE}_NAME) FROM DBA_${_OBJECT_TYPE}S WHERE ${_OBJECT_TYPE}_NAME='${_OBJECT_NAME}';
 exit;
 EOF`
 if [ $IFEXIST -eq 0 ]; then
@@ -431,4 +355,20 @@ if [ $? -eq 0 ]; then
 else
    echo "failed"
 fi
+}
+
+# $1: password string
+# $2: in or out
+function encryptPWD() {
+   if [ "$2" == "in" ]; then
+      ori_pass=$1
+      enc_pass=$(echo "$1" | base64 -i)   
+      echo ${enc_pass}
+   fi
+
+   if [ "$2" == "out" ]; then
+      ori_pass=$1
+      enc_pass=$(echo "$1" | base64 -d)   
+      echo ${enc_pass}
+   fi
 }

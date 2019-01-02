@@ -194,9 +194,15 @@ log "检查配置文件：$_CONFIGFILE 内容格式是否符合要求"
 is_file $_CONFIGFILE
 source $_CONFIGFILE
 
+sdb_system_pass=$(encryptPWD "$sdb_system_pass" "out")
+tdb_system_pass=$(encryptPWD "$tdb_system_pass" "out")
+
 # SDB, TDB 数据库连接串
 _SDB_CONN_STR="system/$sdb_system_pass@$tnsname_sdb"
 _TDB_CONN_STR="system/$tdb_system_pass@$tnsname_tdb"
+
+# scn导出参数串初始值
+scn_para_str="null"
 
 log "检查源端数据库:${tnsname_sdb}的可连接性"
 if [ `checkDBConnection "$_SDB_CONN_STR"` == "no" ]; then
@@ -212,6 +218,14 @@ if [ `checkDBConnection "$_TDB_CONN_STR"` == "no" ]; then
    exit
 else
    echo "成功"
+fi
+
+# 如果使用了--withscn参数，将scn号的传递放在expDataByTable函数外面
+# 为了每个表都生成一样的scn号
+if $WITHSCN; then
+   scn_no=`getCurrentScn "$_SDB_CONN_STR"`
+   log "源端数据库 ${tnsname_sdb} SCN号为：${scn_no}"
+   scn_para_str="FLASHBACK_SCN=${scn_no}" 
 fi
 
 # 如果以表的方式执行导出导入
@@ -341,7 +355,7 @@ if [ "$_TABLE"x != "x" ]; then
       ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$DPPDIR" "$_TDB_CONN_STR"
 
       log "执行导出"
-      expDataByTable ${FROMUSER} ${FROMTAB} "$(if $WITHSCN; then echo yes;else echo no;fi;)" "$DPPDIR" "$_SDB_CONN_STR"
+      expDataByTable ${FROMUSER} ${FROMTAB} "$scn_para_str" "$DPPDIR" "$_SDB_CONN_STR"
    fi
 fi
 
@@ -375,7 +389,7 @@ if [ -n "$_REQFILE" ]; then
    cat  $DPPDIR/conf/tablelist.conf | awk -F ' ' '{print $3}' | uniq |
    while read TOUSER
    do
-      if [ $(isObjectExist "$_TDB_CONN_STR" "USER" "${TOUSER}") == "no" ]; then
+      if [ $(isUserExist "$_TDB_CONN_STR" "USER" "${TOUSER}") == "no" ]; then
          echo "USER: ${TOUSER}在${tnsname_tdb}中不存在"
          exit
       fi
@@ -444,10 +458,6 @@ if [ -n "$_REQFILE" ]; then
 
    if [ "$_DPP_CONTENT" == "data" ];
    then
-      # 将scn号的传递放在expDataByTable函数外面，为了生成一样的scn号
-      if $WITHSCN; then
-         log "源端数据库 ${tnsname_sdb} SCN号为："
-      fi
 
       while read FROMUSER FROMTAB TOUSER TOTAB QUERY
       do
@@ -471,7 +481,7 @@ if [ -n "$_REQFILE" ]; then
          ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$DPPDIR" "$_TDB_CONN_STR"
 
          log "执行导出"
-         expDataByTable ${FROMUSER} ${FROMTAB} "$(if $WITHSCN; then echo yes;else echo no;fi;)" "$DPPDIR" "$_SDB_CONN_STR"
+         expDataByTable ${FROMUSER} ${FROMTAB} "$scn_para_str" "$DPPDIR" "$_SDB_CONN_STR"
       done
    fi
 fi
