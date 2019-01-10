@@ -20,6 +20,8 @@ _DPP_FUNC=${DPPDIR}/funcs/dppfunctions
 _COMMON_FUNC=${DPPDIR}/funcs/commonfunctions
 # DPP默认配置文件路径
 _CONFIGFILE=${DPPDIR}/conf/dpp.conf
+# DPP使用的tablelist文本文件名
+_TABLELIST_FILE=$DPPDIR/conf/tablelist.conf
 
 # 加载公共函数
 source ${_COMMON_FUNC}
@@ -136,8 +138,8 @@ do
 			_REQFILE=$2
 			is_file $_REQFILE
          _EXT_NAME=${_REQFILE##*.}
-         if [ "$_EXT_NAME" != "xls" ] && [ "$_EXT_NAME" != "xlsx"  ]; then
-            log "需求文件的类型必须为excel,文件扩展名必须为xls或xlsx"
+         if [ "$_EXT_NAME" != "xls" ] && [ "$_EXT_NAME" != "xlsx"  ] && [ "$_EXT_NAME" != "conf"  ]; then
+            log "需求文件的类型必须为excel或文本文件,文件扩展名必须为xls或xlsx, 文本文件以.conf结尾"
             usage
             exit
          fi
@@ -365,10 +367,16 @@ fi
 #----------------------------------------------
 if [ -n "$_REQFILE" ]; then
    log "开始按需求文件 $_REQFILE 中所列的表执行导出导入"
+   log "解析和处理需求文件: $_REQFILE"
 
-   log "解析和处理需求文件: $_REQFILE ,最终生成tablelist.conf在conf下"
-   # 需求文件的语法检查，3、4列的赋值(不存在用户名、表名映射)在py脚本中进行
-   python $DPPDIR/funcs/genTableList.py $_REQFILE|tr [a-z] [A-Z]|sed 's/[ \t]*$//g'>$DPPDIR/conf/tablelist.conf
+   # 如果需求文件指定的是excel文件，系统自动生成tablelist.conf文本文件
+   if [ "${_REQFILE##*.}" != "conf" ]; then
+      python $DPPDIR/funcs/genTableList.py $_REQFILE|tr [a-z] [A-Z]|sed 's/[ \t]*$//g'>$_TABLELIST_FILE
+   else # 指定的是文本文件
+      _TABLELIST_FILE=$_REQFILE 
+   fi
+
+   # 文本需求文件的语法检查，3、4列的赋值(不存在用户名、表名映射)在py脚本中进行
 
    # 默认不需要表空间转换，没有指定--remaptbs参数
    is_need_remap_tbs="FALSE"
@@ -383,10 +391,10 @@ if [ -n "$_REQFILE" ]; then
       else
          echo "成功"
       fi
-   done < $DPPDIR/conf/tablelist.conf
+   done < $_TABLELIST_FILE
 
    # 验证用户名在目标库中是否存在
-   cat  $DPPDIR/conf/tablelist.conf | awk -F ' ' '{print $3}' | uniq |
+   cat  $_TABLELIST_FILE | awk -F ' ' '{print $3}' | uniq |
    while read TOUSER
    do
       if [ $(isUserExist "$_TDB_CONN_STR" "USER" "${TOUSER}") == "no" ]; then
@@ -453,7 +461,7 @@ if [ -n "$_REQFILE" ]; then
 
          log "在数据库：${tnsname_tdb}中创建表：${TOUSER}.${TOTAB}"
          executeSQLScript "$_TDB_CONN_STR" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
-      done < $DPPDIR/conf/tablelist.conf
+      done < $_TABLELIST_FILE
    fi
 
    if [ "$_DPP_CONTENT" == "data" ];
