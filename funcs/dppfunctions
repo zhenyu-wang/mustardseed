@@ -255,24 +255,26 @@ fi
 }
 
 #--------------------------------------------------------
-# 功能：从DB中获取创建表的sql
+# 功能：从DB中获取创建对象的sql
 # $1: connection string
-# $2: user
-# $3: table
+# $2: owner
+# $3: object_name 
 # $4: 生成的sql文件名称
 # $5: 是否需要生成tablespace子句，TRUE/FALSE
+# $6: object_type
 #--------------------------------------------------------
-function genSQLCreateTable() {
+function genSQLCreate() {
 _conn_str=$1
 USERNAME=$2
 TABLENAME=$3
 _sqlfile=$4
 _is_need_tbs=$5
+_obj_type=$6
 _is_need_tbs="TRUE"
 sqlplus -S "${_conn_str}" << EOF
 set echo off
 set pagesize 0
-set long 90000
+set long 900000
 set feedback off
 set termout off
 set echo off
@@ -293,26 +295,50 @@ EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'TABLESP
 EXEC DBMS_METADATA.set_transform_param(DBMS_METADATA.session_transform, 'SEGMENT_ATTRIBUTES', ${_is_need_tbs});
 spool $_sqlfile
 --导出表结构
-select dbms_metadata.get_ddl('TABLE', '$TABLENAME', '$USERNAME') from dual;
+select dbms_metadata.get_ddl('$_obj_type', '$TABLENAME', '$USERNAME') from dual;
 spool off;
 exit;
 EOF
 }
 #--------------------------------------------------------
-# 功能：根据已知表，从DB中获取创建索引的sql
+# 功能：根据已知表，从DB中获取其上的索引
 # $1: connection string
 # $2: user
 # $3: table
-# $4: 生成的sql文件名称
+# $4: object_type
 #--------------------------------------------------------
+function getIndexByTable(){
+_CONNSTR=${1}
+_owner=$2
+_tab_name=$3
+_obj_type=$4
+_obj_name=`sqlplus -S "$_CONNSTR" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+select ${_obj_type}_NAME from DBA_${_obj_type}es where owner='${_owner}' and TABLE_NAME='${_tab_name}' and status in('VALID','N/A');
+exit;
+EOF`
+echo $_obj_name
+}
 
 #--------------------------------------------------------
-# 功能：根据已知表，从DB中获取创建约束的sql
+# 功能：根据已知表，从DB中获取约束
 # $1: connection string
 # $2: user
 # $3: table
-# $4: 生成的sql文件名称
+# $4: object_type
 #--------------------------------------------------------
+function getConsByTable(){
+_CONNSTR=${1}
+_owner=$2
+_tab_name=$3
+_obj_type=$4
+_obj_name=`sqlplus -S "$_CONNSTR" << EOF
+set heading off feedback off pagesize 0 verify off echo off
+select ${_obj_type}_NAME from DBA_${_obj_type}s where owner='${_owner}' and TABLE_NAME='${_tab_name}' and status in('ENABLED');
+exit;
+EOF`
+echo $_obj_name
+}
 
 #--------------------------------------------------------
 # 功能：根据username,tablename,tablespace name的映射关系, 对建表和建索引语句进行替换
@@ -324,16 +350,16 @@ EOF
 function filterEditSQLScript(){
    _s_type=$2
    _s_file=$1
-   # 如果原值为 %,则替换为 \w+
-   _fromval=`if [ "$3" == "%" ]; then echo '\w+'; else echo $3; fi;`
+   # 如果原值为 %,则替换为 [a-zA-Z0-9_]+
+   _fromval=`if [ "$3" == "%" ]; then echo '[a-zA-Z0-9_]+'; else echo $3; fi;`
    _toval=$4
 
    case "$_s_type" in
       username )
-         sed -i 's/\"'${_fromval}'\"\./\"'${_toval}'\"\./g' $_s_file
+         sed -i "s/\"${_fromval}\"\./\"${_toval}\"\./g" $_s_file
          ;;
       tbsname )
-         sed -i 's/TABLESPACE \"'${_fromval}'\"/TABLESPACE \"'${_toval}'\"/g' $_s_file
+         sed -ri "s/TABLESPACE +\"${_fromval}\"/TABLESPACE \"${_toval}\"/g" $_s_file
          ;;
    esac
 }
@@ -345,15 +371,16 @@ function filterEditSQLScript(){
 # $2: sql文件名称
 #--------------------------------------------------------
 function executeSQLScript() {
-sqlplus -S "$1" << EOF
+(sqlplus -S "$1" << EOF
 set heading off feedback off pagesize 0 verify off echo off
 @ '$2'
 exit;
 EOF
+) | grep -i "ORA-" > /dev/null 2>&1
 if [ $? -eq 0 ]; then
-	echo "succeeded"
+	echo "failed"
 else
-   echo "failed"
+	echo "succeeded"
 fi
 }
 

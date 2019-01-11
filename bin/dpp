@@ -72,8 +72,9 @@ function usage {
    --table=参数格式: user1.tab1:user2:tab2 目前仅支持用户名的remap \n \
    --status 实时监控查看指定表当前的导出、导入状态 \n \
    --withscn 仅在使用--table或--reqfile时指定
-   --reqfile 按指定的需求文件执行导出导入，与--content必须同时指定，文件类型必须为excel文件，文件名必须为英文字母 \n \
-   不能同时指定--reqfile和--table"
+   --reqfile 按指定的需求文件执行导出导入，与--content必须同时指定， \n \
+		     文件类型必须为以.xlsx或xls文件名结尾的Excel文件，或以.conf文件名结尾的文本文件，文件名必须为英文字母 \n \
+   			 不能同时指定--reqfile和--table"
    echo -e "\n \
    使用前提：\n \
    DPP工具需要运行在一台linux服务器上，作为操作终端(OCM)，也可以将源端数据库作为操作终端 \n \
@@ -289,17 +290,17 @@ if [ "$_TABLE"x != "x" ]; then
          if [ "$FROMTBS" != "%" ]; then
             log "检查表空间： ${FROMTBS} 在数据库： ${tnsname_sdb} 中是否存在"
             if [ $(isObjectExist "$_SDB_CONN_STR" "TABLESPACE" "${FROMTBS}")  == "no" ]; then
-               echo -n "TABLESPACE: ${FROMTBS}在源数据库：${tnsname_sdb}中不存在 \n \
-                  请确认源表空间名填写正确"
+               echo -e "TABLESPACE: ${FROMTBS}在源数据库：${tnsname_sdb}中不存在 \n \
+               请确认源表空间名填写正确"
                exit
             fi
          fi
          
          log "检查表空间： ${TOTBS} 在数据库： ${tnsname_tdb} 中是否存在"
          if [ $(isObjectExist "$_TDB_CONN_STR" "TABLESPACE" "${TOTBS}")  == "no" ]; then
-            echo -n "TABLESPACE: ${TOTBS}在${tnsname_tdb}中不存在 \n \
-               请确认目标表空间名 ${TOTBS}填写正确 \n \
-               或在目标端数据库:${tnsname_tdb}中先创建表空间 ${TOTBS}"
+            echo -e "TABLESPACE: ${TOTBS}在${tnsname_tdb}中不存在 \n \
+            请确认目标表空间名 ${TOTBS}填写正确 \n \
+            或在目标端数据库:${tnsname_tdb}中先创建表空间 ${TOTBS}"
             exit
          fi
       done
@@ -309,7 +310,22 @@ if [ "$_TABLE"x != "x" ]; then
       log "开始进行表结构的同步"
 
       # 生成原始建表SQL
-      genSQLCreateTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs"
+      genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs" "TABLE"
+
+      # 获取表的索引
+	  for name in $(getIndexByTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "INDEX")
+	  do
+		# 创建索引并追加到建表SQL文件中
+		echo "indname:$name"
+	  done
+
+      # 获取表的约束
+	  for name in $(getConsByTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "CONSTRAINT")
+	  do
+		# 创建索引并追加到建表SQL文件中
+		echo "conname:$name"
+	  done
+
       # 如果存在用户映射关系，替换脚本文件中的用户
       if [ "$is_need_remap_user" == "yes" ]; then
          filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "username" "${FROMUSER}" "${TOUSER}" 
@@ -320,12 +336,12 @@ if [ "$_TABLE"x != "x" ]; then
          for i in $(echo $_REMAP_TBS | tr ',' ' '); do
             FROMTBS=$(echo $i | cut -d':' -f 1)
             TOTBS=$(echo $i | cut -d':' -f 2)
-            filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOUTBS}" 
+            filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOTBS}" 
          done
       fi
 
       # 如果不是第一次导meta
-      log "检查表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}是否已经存在"
+      log "检查表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}中是否已存在"
       if [ $(isTableExist "$_TDB_CONN_STR" "${TOUSER}" "${TOTAB}") == "yes" ]; then
          echo "表:${TOUSER}.${TOTAB}在目标端数据库:${tnsname_tdb}已经存在"
          echo "WARNING: 此过程会删除目标端数据库: ${tnsname_tdb} 中表: ${TOUSER}.${TOTAB} 的所有数据"
@@ -435,7 +451,7 @@ if [ -n "$_REQFILE" ]; then
       while read FROMUSER FROMTAB TOUSER TOTAB QUERY
       do
          # 生成原始建表SQL
-         genSQLCreateTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs"
+         genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs" "TABLE"
 
          # 如果存在用户映射关系，替换用户名
          if [ "$FROMUSER" != "$TOUSER" ]; then
