@@ -274,9 +274,11 @@ _is_need_tbs="TRUE"
 sqlplus -S "${_conn_str}" << EOF
 set echo off
 set pagesize 0
+set linesize 120
 set long 900000
+set longchunksize 120
 set feedback off
-set termout off
+set termout on
 set echo off
 set heading off
 set verify off
@@ -371,12 +373,13 @@ function filterEditSQLScript(){
 # $2: sql文件名称
 #--------------------------------------------------------
 function executeSQLScript() {
-(sqlplus -S "$1" << EOF
-set heading off feedback off pagesize 0 verify off echo off
+(
+sqlplus -S "$1" << EOF
+set heading off feedback on pagesize 0 verify off echo on
 @ '$2'
 exit;
 EOF
-) | grep -i "ORA-" > /dev/null 2>&1
+) | grep -i "ORA-" > /dev/null # 2>&1
 if [ $? -eq 0 ]; then
 	echo "failed"
 else

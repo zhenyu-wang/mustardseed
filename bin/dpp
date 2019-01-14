@@ -316,14 +316,16 @@ if [ "$_TABLE"x != "x" ]; then
 	  for name in $(getIndexByTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "INDEX")
 	  do
 		# 创建索引并追加到建表SQL文件中
-		echo "indname:$name"
+      	genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${DPPDIR}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "INDEX"
+		cat "${DPPDIR}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
 	  done
 
       # 获取表的约束
 	  for name in $(getConsByTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "CONSTRAINT")
 	  do
 		# 创建索引并追加到建表SQL文件中
-		echo "conname:$name"
+      	genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${DPPDIR}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "CONSTRAINT"
+		cat "${DPPDIR}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
 	  done
 
       # 如果存在用户映射关系，替换脚本文件中的用户
