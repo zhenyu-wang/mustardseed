@@ -231,6 +231,41 @@ if $WITHSCN; then
    scn_para_str="FLASHBACK_SCN=${scn_no}" 
 fi
 
+# 默认不需要表空间转换，没有指定--remaptbs参数
+is_need_remap_tbs="FALSE"
+
+# 默认不需要用户名转换 
+is_need_remap_user="no"
+
+# 如果表空间名存在映射，校验tablespace是否在SDB, TDB存在
+if [ -n "${_REMAP_TBS}" ]; then
+   is_need_remap_tbs="TRUE"
+   # 循环判断
+   for i in $(echo $_REMAP_TBS | tr ',' ' '); do
+      FROMTBS=$(echo $i | cut -d':' -f 1)
+      TOTBS=$(echo $i | cut -d':' -f 2)
+ # 如果原表空间名没有指定通配符'%',需要检查表空间名在源端数据库中是否存在
+ # 如果使用中指定了 %:tbsdata ，那么应该只能指定一个，不能写成 %:tbs2,tbsa:tbstt
+ # 如果这样写 %:tbs2,tbsa:tbstt,程序不会受影响，只不过没有必要
+ if [ "$FROMTBS" != "%" ]; then
+	log "检查表空间： ${FROMTBS} 在数据库： ${tnsname_sdb} 中是否存在"
+	if [ $(isObjectExist "$_SDB_CONN_STR" "TABLESPACE" "${FROMTBS}")  == "no" ]; then
+	   echo -e "TABLESPACE: ${FROMTBS}在源数据库：${tnsname_sdb}中不存在 \n \
+	   请确认源表空间名填写正确"
+	   exit
+	fi
+ fi
+ 
+    log "检查表空间： ${TOTBS} 在数据库： ${tnsname_tdb} 中是否存在"
+      if [ $(isObjectExist "$_TDB_CONN_STR" "TABLESPACE" "${TOTBS}")  == "no" ]; then
+	     echo -e "TABLESPACE: ${TOTBS}在${tnsname_tdb}中不存在 \n \
+	请确认目标表空间名 ${TOTBS}填写正确 \n \
+	或在目标端数据库:${tnsname_tdb}中先创建表空间 ${TOTBS}"
+	     exit
+      fi
+   done
+fi
+
 # 如果以表的方式执行导出导入
 if [ "$_TABLE"x != "x" ]; then
    log "开始参数值解析"
@@ -247,12 +282,6 @@ if [ "$_TABLE"x != "x" ]; then
    TOTAB=$(echo $_TABLE | awk -F ':' '{print $2}' | awk -F '.' '{print $2}')
    TOTAB=${TOTAB:-$FROMTAB}
    echo "totable: $TOTAB"
-
-   # 默认不需要表空间转换 
-   is_need_remap_tbs="FALSE"
-
-   # 默认不需要用户名转换 
-   is_need_remap_user="no"
 
    # 如果用户名存在映射
    if [ "${FROMUSER}" != "${TOUSER}" ]; then
@@ -276,36 +305,6 @@ if [ "$_TABLE"x != "x" ]; then
 		exit
 	fi
 
-   # 如果表空间名存在映射，校验tablespace是否在SDB, TDB存在
-   if [ -n "${_REMAP_TBS}" ]; then
-      is_need_remap_tbs="TRUE"
-      # 循环判断
-      for i in $(echo $_REMAP_TBS | tr ',' ' '); do
-         FROMTBS=$(echo $i | cut -d':' -f 1)
-         TOTBS=$(echo $i | cut -d':' -f 2)
-
-         # 如果原表空间名没有指定通配符'%',需要检查表空间名在源端数据库中是否存在
-         # 如果使用中指定了 %:tbsdata ，那么应该只能指定一个，不能写成 %:tbs2,tbsa:tbstt
-         # 如果这样写 %:tbs2,tbsa:tbstt,程序不会受影响，只不过没有必要
-         if [ "$FROMTBS" != "%" ]; then
-            log "检查表空间： ${FROMTBS} 在数据库： ${tnsname_sdb} 中是否存在"
-            if [ $(isObjectExist "$_SDB_CONN_STR" "TABLESPACE" "${FROMTBS}")  == "no" ]; then
-               echo -e "TABLESPACE: ${FROMTBS}在源数据库：${tnsname_sdb}中不存在 \n \
-               请确认源表空间名填写正确"
-               exit
-            fi
-         fi
-         
-         log "检查表空间： ${TOTBS} 在数据库： ${tnsname_tdb} 中是否存在"
-         if [ $(isObjectExist "$_TDB_CONN_STR" "TABLESPACE" "${TOTBS}")  == "no" ]; then
-            echo -e "TABLESPACE: ${TOTBS}在${tnsname_tdb}中不存在 \n \
-            请确认目标表空间名 ${TOTBS}填写正确 \n \
-            或在目标端数据库:${tnsname_tdb}中先创建表空间 ${TOTBS}"
-            exit
-         fi
-      done
-   fi
-
    if [ "$_DPP_CONTENT" == "meta" ]; then
       log "开始进行表结构的同步"
 
@@ -318,6 +317,7 @@ if [ "$_TABLE"x != "x" ]; then
 		# 创建索引并追加到建表SQL文件中
       	genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${DPPDIR}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "INDEX"
 		cat "${DPPDIR}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+		rm -rf "${DPPDIR}/sql/${FROMUSER}.${name}.sql"
 	  done
 
       # 获取表的约束
@@ -326,6 +326,7 @@ if [ "$_TABLE"x != "x" ]; then
 		# 创建索引并追加到建表SQL文件中
       	genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${DPPDIR}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "CONSTRAINT"
 		cat "${DPPDIR}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+		rm -rf "${DPPDIR}/sql/${FROMUSER}.${name}.sql"
 	  done
 
       # 如果存在用户映射关系，替换脚本文件中的用户
@@ -396,9 +397,6 @@ if [ -n "$_REQFILE" ]; then
 
    # 文本需求文件的语法检查，3、4列的赋值(不存在用户名、表名映射)在py脚本中进行
 
-   # 默认不需要表空间转换，没有指定--remaptbs参数
-   is_need_remap_tbs="FALSE"
-
    # 检查表在源端是否存在，避免表名填写错误
    while read FROMUSER FROMTAB TOUSER
    do
@@ -421,39 +419,29 @@ if [ -n "$_REQFILE" ]; then
       fi
    done
 
-   # 如果指定了--remaptbs，校验tablespace是否在SDB, TDB存在
-   if [ -n "${_REMAP_TBS}" ]; then
-      is_need_remap_tbs="TRUE"
-
-      # 循环判断
-      for i in $(echo $_REMAP_TBS | tr ',' ' '); do
-         FROMTBS=$(echo $i | cut -d':' -f 1)
-         TOTBS=$(echo $i | cut -d':' -f 2)
-
-         # 如果原表空间名没有指定通配符'%',需要检查表空间名在源端数据库中是否存在
-         if [ "$FROMTBS" != "%" ]; then
-            log "检查表空间： ${FROMTBS} 在数据库： ${tnsname_sdb} 中是否存在"
-            if [ $(isObjectExist "$_SDB_CONN_STR" "TABLESPACE" "${FROMTBS}")  == "no" ]; then
-               echo "TABLESPACE: ${FROMTBS}在${tnsname_sdb}中不存在"
-               exit
-            fi
-         fi
-         
-         log "检查表空间： ${TOTBS} 在数据库： ${tnsname_tdb} 中是否存在"
-         if [ $(isObjectExist "$_TDB_CONN_STR" "TABLESPACE" "${TOTBS}")  == "no" ]; then
-            echo "TABLESPACE: ${TOTBS}在${tnsname_tdb}中不存在"
-            exit
-         fi
-      done
-   fi
-
-   if [ "$_DPP_CONTENT" == "meta" ];
-   then
-
+   if [ "$_DPP_CONTENT" == "meta" ]; then
       while read FROMUSER FROMTAB TOUSER TOTAB QUERY
       do
          # 生成原始建表SQL
          genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs" "TABLE"
+
+         # 获取表的索引
+	      for name in $(getIndexByTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "INDEX")
+	      do
+		     # 创建索引并追加到建表SQL文件中
+      	     genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${DPPDIR}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "INDEX"
+		     cat "${DPPDIR}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+	         rm -rf "${DPPDIR}/sql/${FROMUSER}.${name}.sql"
+	      done
+			
+         # 获取表的约束
+	      for name in $(getConsByTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "CONSTRAINT")
+	      do
+	         # 创建索引并追加到建表SQL文件中
+            genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${DPPDIR}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "CONSTRAINT"
+		      cat "${DPPDIR}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+		      rm -rf "${DPPDIR}/sql/${FROMUSER}.${name}.sql"
+	      done
 
          # 如果存在用户映射关系，替换用户名
          if [ "$FROMUSER" != "$TOUSER" ]; then
@@ -465,7 +453,7 @@ if [ -n "$_REQFILE" ]; then
             for i in $(echo $_REMAP_TBS | tr ',' ' '); do
                FROMTBS=$(echo $i | cut -d':' -f 1)
                TOTBS=$(echo $i | cut -d':' -f 2)
-               filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOUTBS}" 
+               filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOTBS}" 
             done
          fi
 
@@ -508,6 +496,6 @@ if [ -n "$_REQFILE" ]; then
 
          log "执行导出"
          expDataByTable ${FROMUSER} ${FROMTAB} "$scn_para_str" "$DPPDIR" "$_SDB_CONN_STR"
-      done
+      done < $_TABLELIST_FILE
    fi
 fi

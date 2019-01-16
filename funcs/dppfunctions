@@ -129,6 +129,7 @@ function ImpDataByTable(){
    # 清理导入日志
    rm -rf ${5}/log/imp.${username}.${tablename}.log
    # 生成并执行入脚本
+	echo "nohup imp ${6} commit=y ignore=y file=${5}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${5}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &"
 	eval "nohup imp ${6} commit=y ignore=y file=${5}/pipe/${username}.${tablename} fromuser=${username} touser=${tousername} buffer=602400000 log=${5}/log/imp.${username}.${tablename}.log > /dev/null 2>&1 &"
 }
 
@@ -161,6 +162,7 @@ function expDataByTable(){
    # 如果传递的值为null，则替换为""值
 	scn_para=${3%null}
 	rm -rf ${4}/log/exp.${username}.${tablename}.log
+	echo "nohup exp ${5} rows=y ${scn_para} CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${4}/log/exp.${username}.${tablename}.log file=${4}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &"
 	eval "nohup exp ${5} rows=y ${scn_para} CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${4}/log/exp.${username}.${tablename}.log file=${4}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &"
 }
 
