@@ -1,8 +1,8 @@
 ﻿【功能说明】
-	用于将表从一个oracle数据库(SDB)导入到另一个oracle数据库(TDB);
-	工具以命令方式使用;
-	可以按单个表进行导出导入，也可以通过指定需求文件(文本或excel)执行批量导出导入;
-  	使用此工具不需要SDB或TDB申请额外空间(用于导数的空间)。
+	用于将表从一个oracle数据库(SDB)导入到另一个oracle数据库(TDB)
+	工具以命令方式使用
+	可以按单个表进行导出导入，也可以通过指定需求文件(文本或excel)执行批量导出导入
+  	使用此工具不需要SDB或TDB申请额外空间(用于导数的空间)
 
 【使用限制】
 	OS:      Linux
@@ -16,14 +16,14 @@
 	4、选择一台Linux作为操作终端(OCM)进行导数操作，也可以选择SDB或TDB作为OCM
 	5、OCM上需要安装sqlplus, exp, imp工具，并配置到TDB和SDB的tnsname
 	6、需要SDB、TDB的system密码
-	7、OCM上需要安装python模块：xlrd
+	7、OCM上需要安装python模块：xlrd(需要直接从excel读取表)
 
 【使用步骤】
 	1、需求整理
 	   单个表的导出导入直接通过命令行指定表名即可。
 	   多个表的导出导入，可以先将表按源用户名、源表名、目标用户名、目标表名、导出条件的格式
-         整理到excel表格或文本文件中，一个表一行。
-	   需求文件如果是文本文件必须以 .conf 为文件名后缀，各字段以空格隔开。
+       整理到excel表格或文本文件中，一表一行
+	   需求文件如果是文本文件必须以 .conf 作为文件名后缀，各字段以空格隔开
 	2、工具下载
 	   将工具下载到OCM任意文件夹下，直接从github下载或clone
 	   git clone https://github.com/zhenyu-wang/mustardseed.git	
@@ -44,3 +44,5 @@
 	   ./dpp --table=scott.tab1:smith --content=meta –remaptbs=users:tbsdat1
 	5、同步SDB的表scott.tab1结构到TDB的smith用户下,所有表空间都变成tbsdat1
 	   ./dpp --table=scott.tab1:smith --content=meta --remaptbs=%:tbsdat1
+	6、同步需求文件tablelist.conf中的表结构,从SDB到TDB
+	   ./dpp --reqfile=tablelist.conf --content=meta
