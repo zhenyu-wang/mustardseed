@@ -1,6 +1,0 @@
-nohup imp system/neusoft@targetdb commit=y ignore=y file=/home/oracle/DPP/pipe/EPM_SX.A_PAY_FLOW fromuser=EPM_SX touser=EPM_SX buffer=602400000 log=/home/oracle/DPP/log/imp.EPM_SX.A_PAY_FLOW.log > /dev/null 2>&1 &
-nohup imp system/neusoft@targetdb commit=y ignore=y file=/home/oracle/DPP/pipe/EPM_SX.R_DATA fromuser=EPM_SX touser=EPM_SX buffer=602400000 log=/home/oracle/DPP/log/imp.EPM_SX.R_DATA.log > /dev/null 2>&1 &
-nohup imp system/neusoft@targetdb commit=y ignore=y file=/home/oracle/DPP/pipe/EPSA_SX.SA_ORG fromuser=EPSA_SX touser=EPSA_SX buffer=602400000 log=/home/oracle/DPP/log/imp.EPSA_SX.SA_ORG.log > /dev/null 2>&1 &
-nohup imp system/neusoft@targetdb commit=y ignore=y file=/home/oracle/DPP/pipe/EPSA_SX.SA_USER fromuser=EPSA_SX touser=EPSA_SX buffer=602400000 log=/home/oracle/DPP/log/imp.EPSA_SX.SA_USER.log > /dev/null 2>&1 &
-nohup imp system/neusoft@targetdb commit=y ignore=y file=/home/oracle/DPP/pipe/EPSA_SX.SA_DEPT fromuser=EPSA_SX touser=EPSA_SX_FK buffer=602400000 log=/home/oracle/DPP/log/imp.EPSA_SX.SA_DEPT.log > /dev/null 2>&1 &
-nohup imp system/neusoft@targetdb commit=y ignore=y file=/home/oracle/DPP/pipe/EPM_SX.R_DATA_PLAN fromuser=EPM_SX touser=EPM_SX buffer=602400000 log=/home/oracle/DPP/log/imp.EPM_SX.R_DATA_PLAN.log > /dev/null 2>&1 &

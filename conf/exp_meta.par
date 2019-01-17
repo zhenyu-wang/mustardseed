@@ -1,6 +1,0 @@
-exclude=grant,statistics,constraint,trigger
-directory=SDB_DIR
-dumpfile=meta.dmp
-logfile=exp.meta.log
-content=METADATA_ONLY
-tables=EPM_SX.A_PAY_FLOW,EPM_SX.R_DATA,EPSA_SX.SA_ORG,EPSA_SX.SA_USER,EPSA_SX.SA_DEPT,EPM_SX.R_DATA_PLAN
