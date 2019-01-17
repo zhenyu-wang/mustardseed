@@ -1,46 +1,46 @@
-【功能说明】
-   此工具用于将数据从一个oracle数据库导入到另一个oracle数据库
-   使用此工具不需要源端数据库（SDB）和目标端数据库（TDB）申请额外的目录空间
-   工具按表并发执行导出和导入，一个表一个进程
-   2018年12月17日补充
-	这是一个工具集，包含若干功能
+﻿【功能说明】
+	用于将表从一个oracle数据库(SDB)导入到另一个oracle数据库(TDB);
+	工具以命令方式使用;
+	可以按单个表进行导出导入，也可以通过指定需求文件(文本或excel)执行批量导出导入;
+  	使用此工具不需要SDB或TDB申请额外空间(用于导数的空间)。
 
 【使用限制】
-   OS: Linux
-   Oracle: 10g & 11g
-   网络带宽：SDB到TDB至少10MB/s
+	OS:      Linux
+	Oracle:  10g & 11g
+	网络带宽： OCM到SDB及TDB至少10MB/s
 
 【使用前提】
-	1、TDB的undo要大一些，至少30G
-	2、为了性能，TDB尽量在非归档模式下进行导入
+	1、保证TDB的undo表空间要大一些
+	2、考虑性能，TDB尽量配置非归档模式
 	3、TDB的表空间和用户要提前建好，建议表空间使用一个即可，大小必须满足数据量需求
-	4、导数操作在SDB上进行，需要配置到TDB和SDB（本地数据库）的tnsname
-	5、需要SDB、TDB的system密码，TDB操作系统用户oracle的密码
-	6、SDB需要安装sshpass和xlrd(python模块)
+	4、选择一台Linux作为操作终端(OCM)进行导数操作，也可以选择SDB或TDB作为OCM
+	5、OCM上需要安装sqlplus, exp, imp工具，并配置到TDB和SDB的tnsname
+	6、需要SDB、TDB的system密码
+	7、OCM上需要安装python模块：xlrd
 
-【使用方法】
-需求整理
-	1、需要导的表，以： 源用户、源表、目标用户、目标表、导出条件
-		整理到excel表格中，模板依照 template.xlsx
-修改配置
-	修改配置文件dpp.conf，所有的配置都体现在此文件中，根据实际情况修改相关项目
-脚本上传
-	将DPP文件夹上传到SDB oracle用户home目录下	
-脚本执行
-   1. copy whole datapipeport(DPP) directory to source database and target database
-   2. gather requrements in tablelist.txt, head columns: fromuser tablename  touser  tablename
-   3. edit dpp.conf on source db.
-   4. excute sdb_exp_meta.sh, on sdb
-   5. excute tdb_imp_meta.sh, on tdb
-   6. excute sdb_data_pump.sh, on sdb
-【功能列表】
-	解析xls文件，并生成需求文件	
-		gentablelist.sh
-	根据需求文件导出SDB的表结构，导入到TDB(均为oracle11g或更新版本) 
-		sdb_exp_meta.sh
-	根据SDB当前scn导出表数据，并导入到SDB
-		sdb_data_pump.sh
+【使用步骤】
+	1、需求整理
+	   单个表的导出导入直接通过命令行指定表名即可。
+	   多个表的导出导入，可以先将表按源用户名、源表名、目标用户名、目标表名、导出条件的格式
+         整理到excel表格或文本文件中，一个表一行。
+	   需求文件如果是文本文件必须以 .conf 为文件名后缀，各字段以空格隔开。
+	2、修改配置
+	   修改配置文件dpp.conf，设置SDB, TDB的tnsname，system密码设置需要使用命令，避免明文。设置方法： ./dpp –setsdbpass=<SDB system的密码> –settdbpass=<TDB system的密码>
+	3、工具下载
+	   将工具下载到OCM任意文件夹下，直接从github下载或clone
+	   git clone https://github.com/zhenyu-wang/mustardseed.git	
+	4、进入bin目录下，执行 ./dpp -h可以查看命令参数和使用方法
 
-	
-【配置项说明】
-	详见dpp.conf文件中的注释
+【使用场景举例】
+	1、同步SDB的表scott.tab1的结构 到TDB
+	   ./dpp --table=scott.tab1 --content=meta
+	2、同步SDB的表数据scott.tab1 到TDB
+	   ./dpp --table=scott.tab1 --content=data
+	3、根据当前SDB的scn号，同步表数据scott.tab1 到TDB
+	   ./dpp --table=scott.tab1 --content=data --withscn
+	4、同步SDB的表scott.tab1结构 到TDB的smith用户下
+	   ./dpp --table=scott.tab1:smith --content=meta
+	5、同步SDB的表scott.tab1结构 到TDB的smith用户下，表空间从users变成tbsdat1
+	   ./dpp --table=scott.tab1:smith --content=meta –remaptbs=users:tbsdat1
+	5、同步SDB的表scott.tab1结构 到TDB的smith用户下，所有表空间都变成tbsdat1
+	   ./dpp --table=scott.tab1:smith --content=meta --remaptbs=%:tbsdat1
