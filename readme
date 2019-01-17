@@ -24,23 +24,23 @@
 	   多个表的导出导入，可以先将表按源用户名、源表名、目标用户名、目标表名、导出条件的格式
          整理到excel表格或文本文件中，一个表一行。
 	   需求文件如果是文本文件必须以 .conf 为文件名后缀，各字段以空格隔开。
-	2、修改配置
-	   修改配置文件dpp.conf，设置SDB, TDB的tnsname，system密码设置需要使用命令，避免明文。设置方法： ./dpp –setsdbpass=<SDB system的密码> –settdbpass=<TDB system的密码>
-	3、工具下载
+	2、工具下载
 	   将工具下载到OCM任意文件夹下，直接从github下载或clone
 	   git clone https://github.com/zhenyu-wang/mustardseed.git	
-	4、进入bin目录下，执行 ./dpp -h可以查看命令参数和使用方法
+	3、修改配置
+	   修改配置文件conf/dpp.conf,设置SDB, TDB的tnsname,system密码,密码需要使用命令，避免明文。方法： ./dpp –setsdbpass=<SDB system的密码> –settdbpass=<TDB system的密码>
+	4、进入bin目录下，执行 ./dpp -h查看命令参数和使用方法
 
 【使用场景举例】
-	1、同步SDB的表scott.tab1的结构 到TDB
+	1、同步SDB的表scott.tab1结构到TDB
 	   ./dpp --table=scott.tab1 --content=meta
-	2、同步SDB的表数据scott.tab1 到TDB
+	2、同步SDB的表scott.tab1数据到TDB
 	   ./dpp --table=scott.tab1 --content=data
-	3、根据当前SDB的scn号，同步表数据scott.tab1 到TDB
+	3、根据SDB当前的scn号,同步表scott.tab1数据到TDB
 	   ./dpp --table=scott.tab1 --content=data --withscn
-	4、同步SDB的表scott.tab1结构 到TDB的smith用户下
+	4、同步SDB的表scott.tab1结构到TDB的smith用户下
 	   ./dpp --table=scott.tab1:smith --content=meta
-	5、同步SDB的表scott.tab1结构 到TDB的smith用户下，表空间从users变成tbsdat1
+	5、同步SDB的表scott.tab1结构到TDB的smith用户下,表空间从users变成tbsdat1
 	   ./dpp --table=scott.tab1:smith --content=meta –remaptbs=users:tbsdat1
-	5、同步SDB的表scott.tab1结构 到TDB的smith用户下，所有表空间都变成tbsdat1
+	5、同步SDB的表scott.tab1结构到TDB的smith用户下,所有表空间都变成tbsdat1
 	   ./dpp --table=scott.tab1:smith --content=meta --remaptbs=%:tbsdat1
