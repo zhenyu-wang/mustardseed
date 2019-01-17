@@ -1,32 +1,5 @@
 #! /bin/env bash
 
-# functions for data pipe port tools
-# created on 2018-11-12, by wangzheny
-
-function is_file {
-	if [ ! -f "$1" ] ; then
-		echo "文件:$1 不存在或文件名错误"
-		exit 2
-	fi
-}
-
-function is_dir {
-	if [ ! -d "$1" ] ; then
-		echo "目录: $1 不存在。"
-		exit 2
-	fi
-}
-
-# 规范[表清单需求文件]的内容
-# 删除空行、dos符号、全部转换成大写
-# 参数输入：[表清单需求文件]的名字
-function handleFormat {
-	is_file "$1"
-	sed -i 's/^M//' $1
-	sed -i '/^$/d' $1
-	sed -i 's/[a-z]/\u&/g' $1
-}
-
 #----------------------------------------
 # 功能：判断要导的表在sourceDB是否都存在
 # 返回：存在：yes 不存在：no
@@ -166,15 +139,6 @@ function expDataByTable(){
 	eval "nohup exp ${5} rows=y ${scn_para} CONSTRAINTS=n STATISTICS=none TRIGGERS=n GRANTS=n indexes=n tables=${username}.${tablename} log=${4}/log/exp.${username}.${tablename}.log file=${4}/pipe/${username}.${tablename} direct=y > /dev/null 2>&1 &"
 }
 
-# 判断是否已经安装了sshpass工具，如果没有安装则自动安装
-function isInstallTool(){
-which $1>/dev/null 2>&1
-if [ "$?" -eq 1 ]; then 
-	echo "服务器没有安装${1}或当前用户没有执行${1}的权限。" 
-	exit
-fi
-}
-
 # 获取DPP当前工作进程状态和日志状态
 function getDDPStatus(){
 # 正在exp进程
@@ -186,12 +150,6 @@ echo "getDDPStatus"
 # 异常exp进程
 
 done
-}
-
-function log {
-    echo -e "\n"
-    printf -- "$@"
-    echo -e "\n"
 }
 
 #--------------------------------------------------------
@@ -387,20 +345,4 @@ if [ $? -eq 0 ]; then
 else
 	echo "succeeded"
 fi
-}
-
-# $1: password string
-# $2: in or out
-function encryptPWD() {
-   if [ "$2" == "in" ]; then
-      ori_pass=$1
-      enc_pass=$(echo "$1" | base64 -i)   
-      echo ${enc_pass}
-   fi
-
-   if [ "$2" == "out" ]; then
-      ori_pass=$1
-      enc_pass=$(echo "$1" | base64 -d)   
-      echo ${enc_pass}
-   fi
 }
