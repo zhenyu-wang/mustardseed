@@ -315,29 +315,29 @@ if [ "$_TABLE"x != "x" ]; then
       log "开始进行表结构的同步"
 
       # 生成原始建表SQL
-      genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs" "TABLE"
+      genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs" "TABLE"
 
       # 获取表的索引
 	  for name in $(getIndexByTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "INDEX")
 	  do
 		# 创建索引并追加到建表SQL文件中
-      	genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${DPPDIR}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "INDEX"
-		cat "${DPPDIR}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
-		rm -rf "${DPPDIR}/sql/${FROMUSER}.${name}.sql"
+      	genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "INDEX"
+		cat "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" >> "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql"
+		rm -rf "${_TPM_SQLPIPE}/sql/${FROMUSER}.${name}.sql"
 	  done
 
       # 获取表的约束
 	  for name in $(getConsByTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "CONSTRAINT")
 	  do
 		# 创建索引并追加到建表SQL文件中
-      	genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${DPPDIR}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "CONSTRAINT"
-		cat "${DPPDIR}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
-		rm -rf "${DPPDIR}/sql/${FROMUSER}.${name}.sql"
+      	genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "CONSTRAINT"
+		cat "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+		rm -rf "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql"
 	  done
 
       # 如果存在用户映射关系，替换脚本文件中的用户
       if [ "$is_need_remap_user" == "yes" ]; then
-         filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "username" "${FROMUSER}" "${TOUSER}" 
+         filterEditSQLScript "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql" "username" "${FROMUSER}" "${TOUSER}" 
       fi
 
       # 如果存在表空间映射关系，替换脚本文件中的原表空间名
@@ -345,7 +345,7 @@ if [ "$_TABLE"x != "x" ]; then
          for i in $(echo $_REMAP_TBS | tr ',' ' '); do
             FROMTBS=$(echo $i | cut -d':' -f 1)
             TOTBS=$(echo $i | cut -d':' -f 2)
-            filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOTBS}" 
+            filterEditSQLScript "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOTBS}" 
          done
       fi
 
@@ -358,7 +358,7 @@ if [ "$_TABLE"x != "x" ]; then
       fi
 
       log "在数据库：${tnsname_tdb}中创建表：${TOUSER}.${TOTAB}"
-      executeSQLScript "$_TDB_CONN_STR" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+      executeSQLScript "$_TDB_CONN_STR" "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql"
    fi
    
    if [ "$_DPP_CONTENT" == "data" ]; then
@@ -376,13 +376,13 @@ if [ "$_TABLE"x != "x" ]; then
       truncateTable "$_TDB_CONN_STR" "${TOUSER}.${TOTAB}"
 
       log "创建pipe file"
-      makePipe "${FROMUSER}.${FROMTAB}" "$DPPDIR/pipe"
+      makePipe "${FROMUSER}.${FROMTAB}" "$_TMP_SQLPIPE/pipe"
 
       log "执行导入"
-      ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$DPPDIR" "$_TDB_CONN_STR"
+      ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$_TMP_SQLPIPE" "$_TDB_CONN_STR"
 
       log "执行导出"
-      expDataByTable ${FROMUSER} ${FROMTAB} "$scn_para_str" "$DPPDIR" "$_SDB_CONN_STR"
+      expDataByTable ${FROMUSER} ${FROMTAB} "$scn_para_str" "$_TMP_SQLPIPE" "$_SDB_CONN_STR"
    fi
 fi
 
@@ -429,29 +429,29 @@ if [ -n "$_REQFILE" ]; then
       while read FROMUSER FROMTAB TOUSER TOTAB QUERY
       do
          # 生成原始建表SQL
-         genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs" "TABLE"
+         genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql" "$is_need_remap_tbs" "TABLE"
 
          # 获取表的索引
 	      for name in $(getIndexByTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "INDEX")
 	      do
 		     # 创建索引并追加到建表SQL文件中
-      	     genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${DPPDIR}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "INDEX"
-		     cat "${DPPDIR}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
-	         rm -rf "${DPPDIR}/sql/${FROMUSER}.${name}.sql"
+      	     genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "INDEX"
+		     cat "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+	         rm -rf "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql"
 	      done
 			
          # 获取表的约束
 	      for name in $(getConsByTable "$_SDB_CONN_STR" "$FROMUSER" "$FROMTAB" "CONSTRAINT")
 	      do
 	         # 创建索引并追加到建表SQL文件中
-            genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${DPPDIR}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "CONSTRAINT"
-		      cat "${DPPDIR}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
-		      rm -rf "${DPPDIR}/sql/${FROMUSER}.${name}.sql"
+            genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "CONSTRAINT"
+		      cat "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" >> "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql"
+		      rm -rf "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql"
 	      done
 
          # 如果存在用户映射关系，替换用户名
          if [ "$FROMUSER" != "$TOUSER" ]; then
-            filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "username" "${FROMUSER}" "${TOUSER}" 
+            filterEditSQLScript "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql" "username" "${FROMUSER}" "${TOUSER}" 
          fi
 
          # 如果存在表空间映射关系，替换表空间
@@ -459,7 +459,7 @@ if [ -n "$_REQFILE" ]; then
             for i in $(echo $_REMAP_TBS | tr ',' ' '); do
                FROMTBS=$(echo $i | cut -d':' -f 1)
                TOTBS=$(echo $i | cut -d':' -f 2)
-               filterEditSQLScript "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOTBS}" 
+               filterEditSQLScript "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql" "tbsname" "${FROMTBS}" "${TOTBS}" 
             done
          fi
 
@@ -495,13 +495,13 @@ if [ -n "$_REQFILE" ]; then
          truncateTable "$_TDB_CONN_STR" "${TOUSER}.${TOTAB}"
 
          log "创建pipe file"
-         makePipe "${FROMUSER}.${FROMTAB}" "$DPPDIR/pipe"
+         makePipe "${FROMUSER}.${FROMTAB}" "$_TMP_SQLPIPE/pipe"
 
          log "执行导入"
-         ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$DPPDIR" "$_TDB_CONN_STR"
+         ImpDataByTable ${FROMUSER} ${FROMTAB} ${TOUSER} ${TOTAB} "$_TMP_SQLPIPE" "$_TDB_CONN_STR"
 
          log "执行导出"
-         expDataByTable ${FROMUSER} ${FROMTAB} "$scn_para_str" "$DPPDIR" "$_SDB_CONN_STR"
+         expDataByTable ${FROMUSER} ${FROMTAB} "$scn_para_str" "$_TMP_SQLPIPE" "$_SDB_CONN_STR"
       done < $_TABLELIST_FILE
    fi
 fi
