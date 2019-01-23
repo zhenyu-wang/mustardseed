@@ -26,9 +26,9 @@
 	   需求文件如果是文本文件必须以 .conf 作为文件名后缀，各字段以空格隔开
 	2、工具下载
 	   将工具下载到OCM任意文件夹下，直接从github下载或clone
-	   git clone https://github.com/zhenyu-wang/mustardseed.git	
+	   git clone https://github.com/zhenyu-wang/mustardseed.git	dpp
 	3、修改配置
-	   修改配置文件conf/dpp.conf,设置SDB, TDB的tnsname,system密码,密码需要使用命令，避免明文。方法： ./dpp –setsdbpass=<SDB system的密码> –settdbpass=<TDB system的密码>
+	   修改配置文件conf/dpp.conf,设置SDB, TDB的tnsname,system密码,密码需要使用命令，避免明文。方法： bin/dpp –setsdbpass=<SDB system的密码> –settdbpass=<TDB system的密码>
 	4、进入bin目录下，执行 ./dpp -h查看命令参数和使用方法
 
 【使用场景举例】
