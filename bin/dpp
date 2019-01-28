@@ -88,7 +88,9 @@ log "运行环境检查！"
 prerequisiteCheck
 
 # 创建用于存放sql文件、pipe文件的目录
-mkdir -p "${_TMP_SQLPIPE}/{pipe,sql}"
+mkdir -p "${_TMP_SQLPIPE}/pipe"
+mkdir -p "${_TMP_SQLPIPE}/sql"
+mkdir -p "${_TMP_SQLPIPE}/log"
 
 # 设置变量_TABLE内容均为大写
 typeset -u _TABLE
@@ -331,7 +333,7 @@ if [ "$_TABLE"x != "x" ]; then
 	  do
 		# 创建索引并追加到建表SQL文件中
       	genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "CONSTRAINT"
-		cat "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+		cat "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" >> "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql"
 		rm -rf "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql"
 	  done
 
@@ -436,7 +438,7 @@ if [ -n "$_REQFILE" ]; then
 	      do
 		     # 创建索引并追加到建表SQL文件中
       	     genSQLCreate "$_SDB_CONN_STR" "$FROMUSER" "$name" "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" "$is_need_remap_tbs" "INDEX"
-		     cat "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" >> "${DPPDIR}/sql/${FROMUSER}.${FROMTAB}.sql"
+		     cat "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql" >> "${_TMP_SQLPIPE}/sql/${FROMUSER}.${FROMTAB}.sql"
 	         rm -rf "${_TMP_SQLPIPE}/sql/${FROMUSER}.${name}.sql"
 	      done
 			
